@@ -35,7 +35,7 @@ actual = THE_DATA_YOU_WANT_TO_PREDICT
 
 def preprocess(data):
     
-    # Start by trying to convert everything to numeric - this will convert True/False values to binary values
+    # Start by trying to convert everything to integers - this will convert True/False values to binary values
     for i in list(data):
         try:
             data[i] = data[i].astype(int)
@@ -102,10 +102,10 @@ for i in list(data):
     try:
         print(i)
         
-        # Create a subset of a single x & y variable. Remove all infinite/nan values
+        # Create a subset of a single x & y variable. Remove all infinite/null values
         model = data[[i, dependent]].replace([np.inf, -np.inf], np.nan).dropna().reset_index(drop = True)
                 
-        # Resample the data for binary variables to ensure greater accuracy        
+        # Resample the data for binary depdendent variables to ensure greater accuracy - THIS IS OPTIONAL       
         if analysis_type == 'classify': 
             try:
                 # Split the recombined data into adoption/euthanasia sets
@@ -148,7 +148,6 @@ for i in list(data):
         regressions.loc[row, 'RMS_ERROR'] = rmse
         regressions.loc[row, 'ACCURACY'] = accuracy
 
-        
         # Add 1 to the row variable for each iteration
         row = row + 1
         
