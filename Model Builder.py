@@ -19,14 +19,14 @@ pd.set_option('display.float_format', '{:.2f}'.format)
 ''' USER INPUTS - MUST BE SPECIFIED '''
 
 # Supply the dataset
-data = StockInfo
+data = YOUR_DATA
 # Specify the dependent variable
-dependent = 'Performance'
+dependent = 'DEPENDENT VARIABLE COLUMN NAME'
 # Specificy whether you want to 'predict' or 'classify' the data
 analysis_type = 'classify'
 
 # Specify the prediction/classification dataset
-actual = StockInfo_New
+actual = THE_DATA_YOU_WANT_TO_PREDICT
 
 #===================================================================================================================================================================#
 
