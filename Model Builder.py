@@ -1,4 +1,5 @@
 import pandas as pd
+from sklearn.utils import resample
 from sklearn.model_selection import train_test_split, cross_val_score, RepeatedStratifiedKFold
 from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.tree import DecisionTreeRegressor, DecisionTreeClassifier
@@ -18,32 +19,29 @@ pd.set_option('display.float_format', '{:.2f}'.format)
 
 ''' USER INPUTS - MUST BE SPECIFIED '''
 
-# Supply the dataset
-data = YOUR_DATA
-# Specify the dependent variable
-dependent = 'DEPENDENT VARIABLE COLUMN NAME'
-# Specificy whether you want to 'predict' or 'classify' the data
-analysis_type = 'classify'
+# ASSIGN THE TRAINING DATASET TO A VARIABLE
+data = 
 
-# Specify the prediction/classification dataset
-actual = THE_DATA_YOU_WANT_TO_PREDICT
+# SPECIFY THE VALIDATION DATA HERE
+actual = 
+
+# SPECIFY THE COLUMN NAME FOR THE DEPENDENT VARIABLE
+dependent = ''
+
+# SPECIFY WHETHER YOU WANT TO 'predict' OR 'classify' THE DEPENDENT VARIABLE
+analysis_type = 'predict'
+
+# IF YOU ARE CLASSIFYING, SET resample TO 'yes' IF YOU HAVE SKEWED INPUTS AND WANT TO BALANCE THE TRAINING DATA TO 50/50
+resample = 'yes'
 
 #===================================================================================================================================================================#
 
+''' The rest of the script is automated - just let it run '''
 
 ''' Convert text fields to numeric '''
-
 def preprocess(data):
     
-    # Start by trying to convert everything to integers - this will convert True/False values to binary values
-    for i in list(data):
-        try:
-            data[i] = data[i].astype(int)
-            print('{} converted to integer'.format(i))
-        except:
-            pass
-        
-    # For any remaining binary variables (e.g. True/False, Yes/No), convert them to integers
+    # For any binary variables (e.g. True/False, Yes/No), convert them to integers
     for i in list(data):
         vals = data[i].unique()
         if len(vals) == 2:
@@ -54,7 +52,6 @@ def preprocess(data):
             except:
                 pass
 
-    
     # Gather non-numeric columns so that we can convert them to a format the makes sense to the model
     text = data.select_dtypes('object').columns
     
@@ -66,16 +63,19 @@ def preprocess(data):
         
         try:
         # If the column does not contain dashes/colons, the number of unique values is less than 50, and it doesn't contain '20' (since all dates have 20 in them) then convert it to numeric values
-            if data[i].str.contains('20').any() == False and data[i].str.contains(':').any() == False and data[i].nunique() < 50 and data[i].nunique() > 1:
+            if data[i].str.contains('20').any() == False and data[i].str.contains(':').any() == False and data[i].nunique() < 50 and data[i].nunique() > 1: 
                 
-                    # Convert the column to a dummy dataframe (each value becomes a column in the new dataframe with a binary value for each record)
-                    dummies = pd.get_dummies(data[i])
-                    # Merge the dummy dataset with the main dataset
-                    data = data.merge(dummies, left_index = True, right_index = True)
-                    
-                    # Append the column names to the converted text columns list
-                    converted_text_columns.append(i)
-                    print('converted {} to dummy columns'.format(i))
+                # Convert the column to a dummy dataframe (each value becomes a column in the new dataframe with a binary value for each record)
+                dummies = pd.get_dummies(data[i])
+                # Merge the dummy dataset with the main dataset
+                data = data.merge(dummies, left_index = True, right_index = True)
+                
+                for i in list(dummies):
+                    data[i] = data[i].astype(float)
+                
+                # Append the column names to the converted text columns list
+                converted_text_columns.append(i)
+                print('converted {} to dummy columns'.format(str(i)))
         except:
             pass
         
@@ -84,10 +84,11 @@ def preprocess(data):
         
     # Subset the data to just the numeric columns
     data = data[list(data.select_dtypes('int').columns) + list(data.select_dtypes('float').columns)]
+    return(data)
 
 # Run the preprocessing function over the training data and the actual data that we are predicting
-preprocess(data)
-preprocess(actual)
+data = preprocess(data)
+actual = preprocess(actual)
 
 #===================================================================================================================================================================#
 
@@ -102,21 +103,29 @@ for i in list(data):
     try:
         print(i)
         
-        # Create a subset of a single x & y variable. Remove all infinite/null values
+        # Create a subset of a single x & y variable. Remove all infinite/nan values
         model = data[[i, dependent]].replace([np.inf, -np.inf], np.nan).dropna().reset_index(drop = True)
+        model = model.loc[:,~model.columns.duplicated()]
                 
-        # Resample the data for binary depdendent variables to ensure greater accuracy - THIS IS OPTIONAL       
-        if analysis_type == 'classify': 
+        # Resample the data for binary variables to ensure greater accuracy        
+        if analysis_type == 'classify' and resample == 'yes': 
             try:
                 # Split the recombined data into adoption/euthanasia sets
                 underperformed = model[model[dependent] == 0]
                 outperformed = model[model[dependent] == 1]
                 
-                # Upsample the number of euthanasia records to match the length of the adoption records
-                pop_upsampled = resample(outperformed, replace = True, n_samples = len(underperformed))
-                
-                # Merge into one dataset
-                model = pd.concat([pop_upsampled, underperformed])
+                try:
+                    # Upsample the number of euthanasia records to match the length of the adoption records
+                    pop_upsampled = resample(outperformed, replace = True, n_samples = len(underperformed))
+                    
+                    # Merge into one dataset
+                    model = pd.concat([pop_upsampled, underperformed])
+                except:
+                    # Upsample the number of euthanasia records to match the length of the adoption records
+                    pop_upsampled = resample(underperformed, replace = True, n_samples = len(outperformed))
+                    
+                    # Merge into one dataset
+                    model = pd.concat([pop_upsampled, outperformed]) 
                 
             except:
                 pass
@@ -126,12 +135,13 @@ for i in list(data):
         y = model[model.columns[-1]].values
         
         # Run cross validations for the RMSE and R2
-        scores = cross_val_score(LinearRegression(), x, y, cv = 10, scoring = 'neg_mean_squared_error')
-        r2_scores = cross_val_score(LinearRegression(), x, y, cv = 10, scoring = 'r2')
-        try:
-            accuracy_scores = cross_val_score(LogisticRegression(max_iter = 1000), x, y, cv = 10, scoring = 'accuracy')
-        except:
-            pass
+        scores = cross_val_score(LinearRegression(), x, y, cv = 10, n_jobs = 3, scoring = 'neg_mean_squared_error')
+        r2_scores = cross_val_score(LinearRegression(), x, y, cv = 10, n_jobs = 3, scoring = 'r2')
+        if analysis_type == 'classify':
+            try:
+                accuracy_scores = cross_val_score(LogisticRegression(max_iter = 1000), x, y, cv = 10, n_jobs = 3,scoring = 'accuracy')
+            except:
+                pass
         
         # Calculate overall cross validation scores
         rmse = sqrt(abs(scores.mean()))
@@ -148,6 +158,7 @@ for i in list(data):
         regressions.loc[row, 'RMS_ERROR'] = rmse
         regressions.loc[row, 'ACCURACY'] = accuracy
 
+        
         # Add 1 to the row variable for each iteration
         row = row + 1
         
@@ -167,7 +178,7 @@ else:
 regressions = regressions[~regressions['FACTOR'].str.contains(dependent)].reset_index(drop = True)
 
 # Drop anything with very high R squared becuase it is probably not useful for predictions
-regressions = regressions[regressions['CORRELATION_COEFFICIENT'] < .98].reset_index(drop = True)
+regressions = regressions[regressions['CORRELATION_COEFFICIENT'] < .95].reset_index(drop = True)
 
 # Print the final result
 print(regressions)
@@ -189,19 +200,27 @@ for i in range(len(regressions)):
         
         # Create a subset of the dataframe with only the relevant variables
         model = data[variables].replace([np.inf, -np.inf], np.nan).dropna().reset_index(drop = True)
+        model = model.loc[:,~model.columns.duplicated()]
         
-        if analysis_type == 'classify': 
+        if analysis_type == 'classify' and resample == 'yes': 
             try:
                 # Split the recombined data into adoption/euthanasia sets
                 underperformed = model[model[dependent] == 0]
                 outperformed = model[model[dependent] == 1]
                 
-                # Upsample the number of euthanasia records to match the length of the adoption records
-                pop_upsampled = resample(underperformed, replace = True, n_samples = len(ou))
-                
-                # Merge into one dataset
-                model = pd.concat([pop_upsampled, underperformed])
-                
+                try:
+                    # Upsample the number of euthanasia records to match the length of the adoption records
+                    pop_upsampled = resample(outperformed, replace = True, n_samples = len(underperformed))
+                    
+                    # Merge into one dataset
+                    model = pd.concat([pop_upsampled, underperformed])
+                except:
+                    # Upsample the number of euthanasia records to match the length of the adoption records
+                    pop_upsampled = resample(underperformed, replace = True, n_samples = len(outperformed))
+                    
+                    # Merge into one dataset
+                    model = pd.concat([pop_upsampled, outperformed])   
+                    
             except:
                 pass        
         
@@ -210,14 +229,15 @@ for i in range(len(regressions)):
         y = model[dependent].values
         
         # Run the cross validations
-        scores = cross_val_score(LinearRegression(), x, y, cv = 10, scoring = 'neg_mean_squared_error')
-        r2_scores = cross_val_score(LinearRegression(), x, y, cv = 10, scoring = 'r2')
-        try:
-            accuracy_scores = cross_val_score(LogisticRegression(max_iter = 1000), x, y, cv = 10, scoring = 'accuracy')
-            accuracy = accuracy_scores.mean()
-        except:
-            accuracy = 0
-            pass
+        scores = cross_val_score(LinearRegression(), x, y, cv = 10, n_jobs = 3, scoring = 'neg_mean_squared_error')
+        r2_scores = cross_val_score(LinearRegression(), x, y, cv = 10, n_jobs = 3, scoring = 'r2')
+        if analysis_type == 'classify':
+            try:
+                accuracy_scores = cross_val_score(LogisticRegression(max_iter = 1000), x, y, cv = 10, n_jobs = 3, scoring = 'accuracy')
+                accuracy = accuracy_scores.mean()
+            except:
+                accuracy = 0
+                pass
         
         # Calculate overall cross validation results
         rmse = sqrt(abs(scores.mean()))
@@ -257,17 +277,8 @@ for i in range(len(regressions)):
 ''' Preprocess the prediction data '''
 
 # Drop the model inputs that are not available in the prediction dataset
-model_inputs = [x for x in model_inputs if x in list(actual)]
-
-################################
-# Drop model inputs where there are null values in the prediction dataset
-#for i in model_inputs:
-#    try:
-#        if actual[i].isna().sum() > 0:
-#            model_inputs.remove(i)
-#    except:
-#        model_inputs.remove(i)
-################################      
+model_inputs = [x for x in model_inputs if x in list(actual)] 
+model_inputs.remove(dependent) 
 
 # Create a prediction dataset 
 prediction = actual[model_inputs]
@@ -276,7 +287,7 @@ prediction = actual[model_inputs]
 prediction.fillna(prediction.mean(), inplace = True)
 
 # Replace infinite values with nan, then drop nan
-prediction = prediction[prediction.columns[1:]].replace([np.inf, -np.inf], np.nan).dropna().reset_index(drop = True).astype(float)
+prediction = prediction[prediction.columns[0:]].replace([np.inf, -np.inf], np.nan).dropna().reset_index(drop = True).astype(float)
 
 # Drop duplicated columns
 prediction = prediction.loc[:,~prediction.columns.duplicated()]
@@ -292,9 +303,32 @@ results = actual[model_inputs]
 
 # Create a model variable using the training dataset to train the predictive models
 model_inputs.append(dependent)
-model = data[model_inputs].replace([np.inf, -np.inf], np.nan).dropna().reset_index(drop = True).astype(float)
+model = data[model_inputs].replace([np.inf, -np.inf], np.nan)
+model = model.fillna(model.mean()).reset_index(drop = True).astype(float)
 model = model.loc[:,~model.columns.duplicated()]
 
+if analysis_type == 'classify' and resample == 'yes': 
+    try:
+        # Split the recombined data into adoption/euthanasia sets
+        underperformed = model[model[dependent]== 0]
+        outperformed = model[model[dependent] == 1]
+        
+        try:
+            # Upsample the number of euthanasia records to match the length of the adoption records
+            pop_upsampled = resample(outperformed, replace = True, n_samples = len(underperformed))
+            
+            # Merge into one dataset
+            model = pd.concat([pop_upsampled, underperformed])
+        except:
+            # Upsample the number of euthanasia records to match the length of the adoption records
+            pop_upsampled = resample(underperformed, replace = True, n_samples = len(outperformed))
+            
+            # Merge into one dataset
+            model = pd.concat([pop_upsampled, outperformed]) 
+        
+    except:
+        pass    
+            
 # Convert the training variables to arrays
 x = model.drop(dependent, axis = 1).values
 y = model[dependent].values
@@ -315,8 +349,8 @@ if analysis_type == 'predict':
     reg = LinearRegression()
     
     # Compute the RMSE and R2    
-    scores = cross_val_score(reg, x, y, cv = 10, scoring = 'neg_mean_squared_error')
-    r2_scores = cross_val_score(reg, x, y, cv = 10, scoring = 'r2')
+    scores = cross_val_score(reg, x, y, cv = 10, n_jobs = 3, scoring = 'neg_mean_squared_error')
+    r2_scores = cross_val_score(reg, x, y, cv = 10,n_jobs = 3,  scoring = 'r2')
     rmse = sqrt(abs(scores.mean()))
     r2 = r2_scores.mean()
     
@@ -333,8 +367,8 @@ elif analysis_type == 'classify':
         reg = LogisticRegression(max_iter = 1000)
         
         # Compute the RMSE and R2
-        scores = cross_val_score(reg, x, y, cv = 10, scoring = 'accuracy')
-        r2_scores = cross_val_score(reg, x, y, cv = 10, scoring = 'r2')
+        scores = cross_val_score(reg, x, y, cv = 10, n_jobs = 3, scoring = 'accuracy')
+        r2_scores = cross_val_score(reg, x, y, cv = 10, n_jobs = 3, scoring = 'r2')
         accuracy = scores.mean()
         r2 = r2_scores.mean()
         
@@ -371,8 +405,8 @@ if analysis_type == 'predict':
     svm = SVR()
     
     # Compute the RMSE and R2
-    scores = cross_val_score(svm, x, y, cv = 10, scoring = 'neg_mean_squared_error')
-    r2_scores = cross_val_score(svm, x, y, cv = 10, scoring = 'r2')
+    scores = cross_val_score(svm, x, y, cv = 10, n_jobs = 3, scoring = 'neg_mean_squared_error')
+    r2_scores = cross_val_score(svm, x, y, cv = 10, n_jobs = 3, scoring = 'r2')
     rmse = sqrt(abs(scores.mean()))
     r2 = r2_scores.mean()
     
@@ -389,8 +423,8 @@ elif analysis_type == 'classify':
     svm = SVC()
     
     # Compute the RMSE and R2
-    scores = cross_val_score(svm, x, y, cv = 10, scoring = 'accuracy')
-    r2_scores = cross_val_score(svm, x, y, cv = 10, scoring = 'r2')
+    scores = cross_val_score(svm, x, y, cv = 10, n_jobs = 3, scoring = 'accuracy')
+    r2_scores = cross_val_score(svm, x, y, cv = 10, n_jobs = 3, scoring = 'r2')
     accuracy = scores.mean()
     r2 = r2_scores.mean()
     
@@ -423,8 +457,8 @@ if analysis_type == 'predict':
     tree = DecisionTreeRegressor()
     
     # Compute the RMSE and R2
-    scores = cross_val_score(tree, x, y, cv = 10, scoring = 'neg_mean_squared_error')
-    r2_scores = cross_val_score(tree, x, y, cv = 10, scoring = 'r2')
+    scores = cross_val_score(tree, x, y, cv = 10, n_jobs = 3, scoring = 'neg_mean_squared_error')
+    r2_scores = cross_val_score(tree, x, y, cv = 10, n_jobs = 3, scoring = 'r2')
     rmse = sqrt(abs(scores.mean()))
     r2 = r2_scores.mean()
     
@@ -442,8 +476,8 @@ elif analysis_type == 'classify':
     tree = DecisionTreeClassifier()
     
     # Compute the RMSE and R2
-    scores = cross_val_score(tree, x, y, cv = 10, scoring = 'accuracy')
-    r2_scores = cross_val_score(tree, x, y, cv = 10, scoring = 'r2')
+    scores = cross_val_score(tree, x, y, cv = 10, n_jobs = 3, scoring = 'accuracy')
+    r2_scores = cross_val_score(tree, x, y, cv = 10, n_jobs = 3, scoring = 'r2')
     accuracy = scores.mean()
     r2 = r2_scores.mean()
     
@@ -476,8 +510,8 @@ if analysis_type == 'predict':
     forest = RandomForestRegressor(n_estimators = 100)
     
     # Compute the RMSE and R2
-    scores = cross_val_score(forest, x, y, cv = 10, scoring = 'neg_mean_squared_error')
-    r2_scores = cross_val_score(forest, x, y, cv = 10, scoring = 'r2')
+    scores = cross_val_score(forest, x, y, cv = 10, n_jobs = 3, scoring = 'neg_mean_squared_error')
+    r2_scores = cross_val_score(forest, x, y, cv = 10, n_jobs = 3, scoring = 'r2')
     rmse = sqrt(abs(scores.mean()))
     r2 = r2_scores.mean()
     
@@ -495,8 +529,8 @@ elif analysis_type == 'classify':
     forest = RandomForestClassifier(n_estimators = 100)
     
     # Compute the RMSE and R2
-    scores = cross_val_score(forest, x, y, cv = 10, scoring = 'accuracy')
-    r2_scores = cross_val_score(forest, x, y, cv = 10, scoring = 'r2')
+    scores = cross_val_score(forest, x, y, cv = 10, n_jobs = 3, scoring = 'accuracy')
+    r2_scores = cross_val_score(forest, x, y, cv = 10, n_jobs = 3, scoring = 'r2')
     accuracy = scores.mean()
     r2 = r2_scores.mean()
     
@@ -535,9 +569,8 @@ y = model[dependent].values
 # Split the data into train and test data
 x_train, x_test, y_train, y_test = train_test_split(x, y, train_size = .8)
 
-# Create a prediction dataframe with only the relevant variables that the model will use
-#prediction = actual[model_inputs].replace([np.inf, -np.inf], np.nan).dropna().reset_index(drop = True).astype(float).drop(dependent, axis = 1)
-
+# Scale the prediction dataset
+prediction_scaled = scaler.fit_transform(prediction)
 
 #===================================================================================================================================================================#
 
@@ -551,8 +584,8 @@ if analysis_type == 'predict':
     KNN = KNeighborsRegressor(n_neighbors = 3)
 
     # Compute the RMSE and R2
-    scores = cross_val_score(KNN, x, y, cv = 10, scoring = 'neg_mean_squared_error')
-    r2_scores = cross_val_score(KNN, x, y, cv = 10, scoring = 'r2')
+    scores = cross_val_score(KNN, x, y, cv = 10, n_jobs = 3, scoring = 'neg_mean_squared_error')
+    r2_scores = cross_val_score(KNN, x, y, cv = 10, n_jobs = 3, scoring = 'r2')
     rmse = sqrt(abs(scores.mean()))
     r2 = r2_scores.mean()
     
@@ -569,8 +602,8 @@ elif analysis_type == 'classify':
     KNN = KNeighborsClassifier(n_neighbors = 3)
     
     # Compute the RMSE and R2
-    scores = cross_val_score(KNN, x, y, cv = 10, scoring = 'accuracy')
-    r2_scores = cross_val_score(KNN, x, y, cv = 10, scoring = 'r2')
+    scores = cross_val_score(KNN, x, y, cv = 10, n_jobs = 3, scoring = 'accuracy')
+    r2_scores = cross_val_score(KNN, x, y, cv = 10, n_jobs = 3, scoring = 'r2')
     accuracy = scores.mean()
     r2 = r2_scores.mean()
     
@@ -588,7 +621,7 @@ else:
 KNN.fit(x, y)
     
 # Add a column with the predicted values to the dataframe
-results['KNN_Prediction'] = KNN.predict(prediction)
+results['KNN_Prediction'] = KNN.predict(prediction_scaled)
 
 
 #===================================================================================================================================================================#
@@ -603,8 +636,8 @@ if analysis_type == 'predict':
     net = MLPRegressor(hidden_layer_sizes = (1000, 100, 100, 100, 10), max_iter = 100000)
     
     # Compute the RMSE and R2
-    scores = cross_val_score(net, x, y, cv = 10, scoring = 'neg_mean_squared_error')
-    r2_scores = cross_val_score(net, x, y, cv = 10, scoring = 'r2')
+    scores = cross_val_score(net, x, y, cv = 10, n_jobs = 3, scoring = 'neg_mean_squared_error')
+    r2_scores = cross_val_score(net, x, y, cv = 10, n_jobs = 3, scoring = 'r2')
     rmse = sqrt(abs(scores.mean()))
     r2 = r2_scores.mean()
     
@@ -621,8 +654,8 @@ elif analysis_type == 'classify':
     net = MLPClassifier(hidden_layer_sizes = (1000, 100, 100, 100, 10), max_iter = 100000)    
     
     # Compute the RMSE and R2
-    scores = cross_val_score(net, x, y, cv = 10, scoring = 'accuracy')
-    r2_scores = cross_val_score(net, x, y, cv = 10, scoring = 'r2')
+    scores = cross_val_score(net, x, y, cv = 10, n_jobs = 3, scoring = 'accuracy')
+    r2_scores = cross_val_score(net, x, y, cv = 10, n_jobs = 3, scoring = 'r2')
     accuracy = scores.mean()
     r2 = r2_scores.mean()
     
@@ -640,7 +673,7 @@ else:
 net.fit(x, y)
     
 # Add a column with the predicted values to the dataframe
-results['Neural_Net_Prediction'] = net.predict(prediction)
+results['Neural_Net_Prediction'] = net.predict(prediction_scaled)
 
 
 #===================================================================================================================================================================#
@@ -679,4 +712,13 @@ print('-------------------------------------------------------------------------
 
 
 # Show the predictions vs the actual
-review = results[[dependent, 'Regression_Prediction', 'Support_Vector_Prediction', 'Tree_Prediction', 'Forest_Prediction', 'KNN_Prediction', 'Neural_Net_Prediction' ]]
+review = results[['Regression_Prediction', 'Support_Vector_Prediction', 'Tree_Prediction', 'Forest_Prediction', 'KNN_Prediction', 'Neural_Net_Prediction' ]]
+
+# If you are validating against data that already has the actual value, this will append it to the review dataframe
+try:
+    review['Actual'] = actual[dependent]
+except:
+    pass
+
+# Reindex the results
+review.reset_index(inplace = True)
