@@ -1,5 +1,4 @@
 import pandas as pd
-from sklearn.utils import resample
 from sklearn.model_selection import train_test_split, cross_val_score, RepeatedStratifiedKFold
 from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.tree import DecisionTreeRegressor, DecisionTreeClassifier
@@ -9,8 +8,10 @@ from sklearn.neural_network import MLPClassifier, MLPRegressor
 from sklearn.svm import SVR, SVC
 from sklearn.metrics import r2_score, mean_squared_error, confusion_matrix, classification_report
 from sklearn import preprocessing
+from sklearn.utils import shuffle
 import numpy as np
 from math import sqrt
+import seaborn as sns
 
 # Suppress scientific notation in pandas
 pd.set_option('display.float_format', '{:.2f}'.format)
@@ -22,17 +23,17 @@ pd.set_option('display.float_format', '{:.2f}'.format)
 # ASSIGN THE TRAINING DATASET TO A VARIABLE
 data = 
 
-# SPECIFY THE VALIDATION DATA HERE
+# SPECIFY THE PREDICTION OR VALIDATION DATA HERE
 actual = 
 
-# SPECIFY THE COLUMN NAME FOR THE DEPENDENT VARIABLE
+# SPECIFY THE DEPENDENT VARIABLE BY ITS COLUMN NAME
 dependent = ''
 
 # SPECIFY WHETHER YOU WANT TO 'predict' OR 'classify' THE DEPENDENT VARIABLE
-analysis_type = 'predict'
+analysis_type = 'classify'.lower()
 
 # IF YOU ARE CLASSIFYING, SET resample TO 'yes' IF YOU HAVE SKEWED INPUTS AND WANT TO BALANCE THE TRAINING DATA TO 50/50
-resample = 'yes'
+resample = 'yes'.lower()
 
 #===================================================================================================================================================================#
 
@@ -43,11 +44,13 @@ def preprocess(data):
     
     # For any binary variables (e.g. True/False, Yes/No), convert them to integers
     for i in list(data):
-        vals = data[i].unique()
+        vals = data[i].dropna().unique()
         if len(vals) == 2:
             try:
                 data[i] = data[i].str.replace(vals[0],'0')
-                data[i] = data[i].str.replace(vals[1],'1').astype(int)
+                data[i] = data[i].str.replace(vals[1],'1')
+                data[i] = data[i].astype(float)
+                data[i] = data[i].fillna(data[i].mean())
                 print('{} converted to binary'.format(i))
             except:
                 pass
@@ -83,12 +86,19 @@ def preprocess(data):
             print(i, 'is not valid')
         
     # Subset the data to just the numeric columns
-    data = data[list(data.select_dtypes('int').columns) + list(data.select_dtypes('float').columns)]
+    data = data[list(data.select_dtypes('int').columns) + list(data.select_dtypes('float').columns) + [dependent]]
+    data = data.loc[:,~data.columns.duplicated()]
     return(data)
 
 # Run the preprocessing function over the training data and the actual data that we are predicting
 data = preprocess(data)
 actual = preprocess(actual)
+
+# Drop fields from the data where more than 75% of the records in that field are null, as that will adversely affect the model
+data = data.replace([np.inf, -np.inf], np.nan)
+for i in list(data):
+    if sum(data[i].isna())/len(data) > .75:
+        data = data.drop(i, axis = 1)
 
 #===================================================================================================================================================================#
 
@@ -108,24 +118,20 @@ for i in list(data):
         model = model.loc[:,~model.columns.duplicated()]
                 
         # Resample the data for binary variables to ensure greater accuracy        
-        if analysis_type == 'classify' and resample == 'yes': 
+        if analysis_type == 'classify' and resample == 'yes' and model[dependent].nunique() == 2: 
             try:
-                # Split the recombined data into adoption/euthanasia sets
-                underperformed = model[model[dependent] == 0]
-                outperformed = model[model[dependent] == 1]
+                 # Split the binary data into separate groups
+                group_zero = shuffle(model[model[dependent]== 0])
+                group_one = shuffle(model[model[dependent] == 1])
                 
-                try:
-                    # Upsample the number of euthanasia records to match the length of the adoption records
-                    pop_upsampled = resample(outperformed, replace = True, n_samples = len(underperformed))
-                    
-                    # Merge into one dataset
-                    model = pd.concat([pop_upsampled, underperformed])
-                except:
-                    # Upsample the number of euthanasia records to match the length of the adoption records
-                    pop_upsampled = resample(underperformed, replace = True, n_samples = len(outperformed))
-                    
-                    # Merge into one dataset
-                    model = pd.concat([pop_upsampled, outperformed]) 
+                # Reduce the larger of the two groups to the same number of rows as the smaller one
+                if len(group_zero) > len(group_one):
+                    group_zero = group_zero[:len(group_one)]
+                else:
+                    group_one = group_one[:len(group_zero)]
+                
+                # Recombine the groups into the model dataframe
+                model = pd.concat([group_zero, group_one]).reset_index(drop = True)
                 
             except:
                 pass
@@ -135,11 +141,11 @@ for i in list(data):
         y = model[model.columns[-1]].values
         
         # Run cross validations for the RMSE and R2
-        scores = cross_val_score(LinearRegression(), x, y, cv = 10, n_jobs = 3, scoring = 'neg_mean_squared_error')
-        r2_scores = cross_val_score(LinearRegression(), x, y, cv = 10, n_jobs = 3, scoring = 'r2')
+        scores = cross_val_score(LinearRegression(), x, y, cv = 10, n_jobs = 1, scoring = 'neg_mean_squared_error')
+        r2_scores = cross_val_score(LinearRegression(), x, y, cv = 10, n_jobs = 1, scoring = 'r2')
         if analysis_type == 'classify':
             try:
-                accuracy_scores = cross_val_score(LogisticRegression(max_iter = 1000), x, y, cv = 10, n_jobs = 3,scoring = 'accuracy')
+                accuracy_scores = cross_val_score(LogisticRegression(max_iter = 1000), x, y, cv = 10, n_jobs = 1,scoring = 'accuracy')
             except:
                 pass
         
@@ -177,8 +183,10 @@ else:
 # Remove the dependent variable from the regressions data and reindex it
 regressions = regressions[~regressions['FACTOR'].str.contains(dependent)].reset_index(drop = True)
 
-# Drop anything with very high R squared becuase it is probably not useful for predictions
+# Drop anything with very high R squared and/or accuracy becuase it is probably overfit the model - THIS IS OPTIONAL
 regressions = regressions[regressions['CORRELATION_COEFFICIENT'] < .95].reset_index(drop = True)
+if analysis_type == 'clasify':
+    regressions = regressions[regressions['ACCURACY'] < .95].reset_index(drop = True)
 
 # Print the final result
 print(regressions)
@@ -202,24 +210,21 @@ for i in range(len(regressions)):
         model = data[variables].replace([np.inf, -np.inf], np.nan).dropna().reset_index(drop = True)
         model = model.loc[:,~model.columns.duplicated()]
         
-        if analysis_type == 'classify' and resample == 'yes': 
+        if analysis_type == 'classify' and resample == 'yes' and model[dependent].nunique() == 2: 
             try:
-                # Split the recombined data into adoption/euthanasia sets
-                underperformed = model[model[dependent] == 0]
-                outperformed = model[model[dependent] == 1]
                 
-                try:
-                    # Upsample the number of euthanasia records to match the length of the adoption records
-                    pop_upsampled = resample(outperformed, replace = True, n_samples = len(underperformed))
-                    
-                    # Merge into one dataset
-                    model = pd.concat([pop_upsampled, underperformed])
-                except:
-                    # Upsample the number of euthanasia records to match the length of the adoption records
-                    pop_upsampled = resample(underperformed, replace = True, n_samples = len(outperformed))
-                    
-                    # Merge into one dataset
-                    model = pd.concat([pop_upsampled, outperformed])   
+                # Split the binary data into separate groups
+                group_zero = shuffle(model[model[dependent]== 0])
+                group_one = shuffle(model[model[dependent] == 1])
+                
+                # Reduce the larger of the two groups to the same number of rows as the smaller one
+                if len(group_zero) > len(group_one):
+                    group_zero = group_zero[:len(group_one)]
+                else:
+                    group_one = group_one[:len(group_zero)]
+                
+                # Recombine the groups into the model dataframe
+                model = pd.concat([group_zero, group_one]).reset_index(drop = True)
                     
             except:
                 pass        
@@ -229,11 +234,11 @@ for i in range(len(regressions)):
         y = model[dependent].values
         
         # Run the cross validations
-        scores = cross_val_score(LinearRegression(), x, y, cv = 10, n_jobs = 3, scoring = 'neg_mean_squared_error')
-        r2_scores = cross_val_score(LinearRegression(), x, y, cv = 10, n_jobs = 3, scoring = 'r2')
+        scores = cross_val_score(LinearRegression(), x, y, cv = 10, n_jobs = 1, scoring = 'neg_mean_squared_error')
+        r2_scores = cross_val_score(LinearRegression(), x, y, cv = 10, n_jobs = 1, scoring = 'r2')
         if analysis_type == 'classify':
             try:
-                accuracy_scores = cross_val_score(LogisticRegression(max_iter = 1000), x, y, cv = 10, n_jobs = 3, scoring = 'accuracy')
+                accuracy_scores = cross_val_score(LogisticRegression(max_iter = 1000), x, y, cv = 10, n_jobs = 1, scoring = 'accuracy')
                 accuracy = accuracy_scores.mean()
             except:
                 accuracy = 0
@@ -301,30 +306,28 @@ results = actual[model_inputs]
 
 ''' Preprocess the training data '''
 
-# Create a model variable using the training dataset to train the predictive models
+# Create a model variable using the training dataset to train the predictive models and replace the null values
 model_inputs.append(dependent)
-model = data[model_inputs].replace([np.inf, -np.inf], np.nan)
+model = data[model_inputs]
 model = model.fillna(model.mean()).reset_index(drop = True).astype(float)
 model = model.loc[:,~model.columns.duplicated()]
+model = model.dropna().reset_index(drop = True)
 
-if analysis_type == 'classify' and resample == 'yes': 
+if analysis_type == 'classify' and resample == 'yes' and model[dependent].nunique() == 2:  
     try:
-        # Split the recombined data into adoption/euthanasia sets
-        underperformed = model[model[dependent]== 0]
-        outperformed = model[model[dependent] == 1]
         
-        try:
-            # Upsample the number of euthanasia records to match the length of the adoption records
-            pop_upsampled = resample(outperformed, replace = True, n_samples = len(underperformed))
-            
-            # Merge into one dataset
-            model = pd.concat([pop_upsampled, underperformed])
-        except:
-            # Upsample the number of euthanasia records to match the length of the adoption records
-            pop_upsampled = resample(underperformed, replace = True, n_samples = len(outperformed))
-            
-            # Merge into one dataset
-            model = pd.concat([pop_upsampled, outperformed]) 
+        # Split the binary data into separate groups
+        group_zero = shuffle(model[model[dependent]== 0])
+        group_one = shuffle(model[model[dependent] == 1])
+        
+        # Reduce the larger of the two groups to the same number of rows as the smaller one
+        if len(group_zero) > len(group_one):
+            group_zero = group_zero[:len(group_one)]
+        else:
+            group_one = group_one[:len(group_zero)]
+        
+        # Recombine the groups into the model dataframe
+        model = pd.concat([group_zero, group_one]).reset_index(drop = True)
         
     except:
         pass    
@@ -360,6 +363,7 @@ if analysis_type == 'predict':
     
     model_results.loc[0, 'Model'] = 'Linear Regression'
     model_results.loc[0, 'RMSE'] = rmse
+    model_results.loc[0, 'Column'] = 'Regression_Prediction'
     
 elif analysis_type == 'classify':
     try:
@@ -378,10 +382,13 @@ elif analysis_type == 'classify':
         
         model_results.loc[0, 'Model'] = 'Logistic Regression'
         model_results.loc[0, 'Accuracy'] = accuracy
+        model_results.loc[0, 'Column'] = 'Regression_Prediction'
+        
     except:
         model_results.loc[0, 'Model'] = 'Logistic Regression'
         model_results.loc[0, 'Accuracy'] = np.nan
         model_results.loc[0, 'RMSE'] = np.nan
+        model_results.loc[0, 'Column'] = 'Regression_Prediction'
         
 else:
     print("YOU NEED TO SPECIFY THE ANALYSIS TYPE AS EITHER 'predict' OR 'classify' BEFORE RUNNING THE MODEL")
@@ -416,6 +423,7 @@ if analysis_type == 'predict':
     
     model_results.loc[1, 'Model'] = 'Support Vector Machine'
     model_results.loc[1, 'RMSE'] = rmse
+    model_results.loc[1, 'Column'] = 'Support_Vector_Prediction'
     
 elif analysis_type == 'classify':
     
@@ -434,6 +442,7 @@ elif analysis_type == 'classify':
     
     model_results.loc[1, 'Model'] = 'Support Vector Machine'
     model_results.loc[1, 'Accuracy'] = accuracy
+    model_results.loc[1, 'Column'] = 'Support_Vector_Prediction'
 
 else:
     print("YOU NEED TO SPECIFY THE ANALYSIS TYPE AS EITHER 'predict' OR 'classify' BEFORE RUNNING THE MODEL")
@@ -468,6 +477,7 @@ if analysis_type == 'predict':
 
     model_results.loc[2, 'Model'] = 'Decision Tree'
     model_results.loc[2, 'RMSE'] = rmse    
+    model_results.loc[2, 'Column'] = 'Tree_Prediction'
     
 # If the prediction variable is continuous, use the Regressor
 elif analysis_type == 'classify':
@@ -486,7 +496,8 @@ elif analysis_type == 'classify':
     print('Decision Tree Accuracy: {}'.format(accuracy), '\n')
     
     model_results.loc[2, 'Model'] = 'Decision Tree'
-    model_results.loc[2, 'Accuracy'] = accuracy    
+    model_results.loc[2, 'Accuracy'] = accuracy  
+    model_results.loc[2, 'Column'] = 'Tree_Prediction'
     
 else:
     print("YOU NEED TO SPECIFY THE ANALYSIS TYPE AS EITHER 'predict' OR 'classify' BEFORE RUNNING THE MODEL")
@@ -521,6 +532,7 @@ if analysis_type == 'predict':
     
     model_results.loc[3, 'Model'] = 'Random Forest'
     model_results.loc[3, 'RMSE'] = rmse
+    model_results.loc[3, 'Column'] = 'Forest_Prediction'
 
 # If the prediction variable is continuous, use the Regressor
 elif analysis_type == 'classify':
@@ -539,7 +551,8 @@ elif analysis_type == 'classify':
     print('Random Forest Accuracy: {}'.format(accuracy), '\n')
     
     model_results.loc[3, 'Model'] = 'Random Forest'
-    model_results.loc[3, 'Accuracy'] = accuracy    
+    model_results.loc[3, 'Accuracy'] = accuracy 
+    model_results.loc[3, 'Column'] = 'Forest_Prediction'
    
 else:
     print("YOU NEED TO SPECIFY THE ANALYSIS TYPE AS EITHER 'predict' OR 'classify' BEFORE RUNNING THE MODEL")
@@ -556,9 +569,6 @@ results['Forest_Prediction'] = forest.predict(prediction)
 
 ''' Prep the data for predictive models THAT REQUIRE DATA NORMALIZATION'''
 
-# Create a model variable to use to train the predictive models
-model = data[model_inputs].replace([np.inf, -np.inf], np.nan).dropna().reset_index(drop = True).astype(float)[:5000]
-
 # Assign a scaler variable
 scaler = preprocessing.MinMaxScaler()
 
@@ -571,6 +581,7 @@ x_train, x_test, y_train, y_test = train_test_split(x, y, train_size = .8)
 
 # Scale the prediction dataset
 prediction_scaled = scaler.fit_transform(prediction)
+
 
 #===================================================================================================================================================================#
 
@@ -595,6 +606,7 @@ if analysis_type == 'predict':
     
     model_results.loc[4, 'Model'] = 'KNN'
     model_results.loc[4, 'RMSE'] = rmse
+    model_results.loc[4, 'Column'] = 'KNN_Prediction'
     
 elif analysis_type == 'classify':
 
@@ -613,6 +625,7 @@ elif analysis_type == 'classify':
     
     model_results.loc[4, 'Model'] = 'KNN'
     model_results.loc[4, 'Accuracy'] = accuracy    
+    model_results.loc[4, 'Column'] = 'KNN_Prediction'
 
 else:
     print("YOU NEED TO SPECIFY THE ANALYSIS TYPE AS EITHER 'predict' OR 'classify' BEFORE RUNNING THE MODEL")
@@ -647,6 +660,7 @@ if analysis_type == 'predict':
     
     model_results.loc[5, 'Model'] = 'Neural Network'
     model_results.loc[5, 'RMSE'] = rmse
+    model_results.loc[5, 'Column'] = 'Neural_Net_Prediction'
     
 elif analysis_type == 'classify':
     
@@ -665,6 +679,7 @@ elif analysis_type == 'classify':
     
     model_results.loc[5, 'Model'] = 'Neural Network'
     model_results.loc[5, 'Accuracy'] = accuracy
+    model_results.loc[5, 'Column'] = 'Neural_Net_Prediction'
 
 else:
     print("YOU NEED TO SPECIFY THE ANALYSIS TYPE AS EITHER 'predict' OR 'classify' BEFORE RUNNING THE MODEL")
@@ -701,15 +716,15 @@ elif analysis_type == 'classify':
     # Print the results of the analysis
     print('\n Your optimal model is {} with an overall accuracy of {}'.format(model_results.loc[0,'Model'], model_results.loc[0,'Accuracy']))
     
+# Assign a variable for the name of the column with the prediction that we want to use, then remove the 'Column' field from the model_results dataframe
+column = model_results.loc[0,'Column']
+model_results.drop('Column', axis = 1)
+    
 # Print the independent variables
 print('\n\n The following factors should be included in your model as independent variables: {}'.format(model_inputs))
 
 # Check the results
 print('\n\n The results for each model are as follows: \n', model_results)
-
-print('\n--------------------------------------------------------------------------------------------------------------------------------------------------------------')
-print('--------------------------------------------------------------------------------------------------------------------------------------------------------------')
-
 
 # Show the predictions vs the actual
 review = results[['Regression_Prediction', 'Support_Vector_Prediction', 'Tree_Prediction', 'Forest_Prediction', 'KNN_Prediction', 'Neural_Net_Prediction' ]]
@@ -721,4 +736,40 @@ except:
     pass
 
 # Reindex the results
-review.reset_index(inplace = True)
+review.reset_index(inplace = True, drop = True)
+
+# Check the predictive accuracy of the model on the validation data
+try:
+    if analysis_type == 'classify':
+        print('\n The accuracy of your model against the validation set is {}'.format(sum(review[model_results.loc[0,'Column']] == review['Actual'])/len(review)))
+    else:
+        print('\n The mean error against the validation set is {}. The standard deviation of the training set is {}'.format(round(abs(review['Actual'] - review[column]).mean(),2), round(data[dependent].std(),2)))
+except:
+    pass
+
+# Set visualization parameters based on the analysis type
+if analysis_type == 'classify':
+    value = True
+    value_2 = False
+else: 
+    value = False
+    value_2 = True
+  
+# Plot the histogram
+try:
+    sns.set(rc = {'figure.figsize' : (15,6)})
+    ax = sns.distplot(review[column], hist = value, label = column, kde = value_2)
+    try:
+        ax = sns.distplot(review['Actual'], hist = value, label = 'Validation Data Actual', kde = value_2)
+    except:
+        pass
+    ax = sns.distplot(data[dependent], hist = value, label = 'Training Data Actual', kde = value_2)
+    ax.legend(bbox_to_anchor = (1, 1), loc = 2)
+    ax.set(xlabel = dependent)
+    ax.set(yscale="symlog")
+except:
+    pass
+
+print('\n--------------------------------------------------------------------------------------------------------------------------------------------------------------')
+print('--------------------------------------------------------------------------------------------------------------------------------------------------------------')
+
