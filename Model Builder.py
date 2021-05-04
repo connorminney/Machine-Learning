@@ -1,7 +1,7 @@
 import pandas as pd
 from sklearn.model_selection import train_test_split, cross_val_score, RepeatedStratifiedKFold
 from sklearn.linear_model import LinearRegression, LogisticRegression
-from sklearn.tree import DecisionTreeRegressor, DecisionTreeClassifier
+from sklearn.tree import DecisionTreeRegressor, DecisionTreeClassifier, plot_tree
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
 from sklearn.neural_network import MLPClassifier, MLPRegressor
@@ -12,6 +12,7 @@ from sklearn.utils import shuffle
 import numpy as np
 from math import sqrt
 import seaborn as sns
+import matplotlib.pyplot as plt
 
 # Suppress scientific notation in pandas
 pd.set_option('display.float_format', '{:.2f}'.format)
@@ -19,18 +20,20 @@ pd.set_option('display.float_format', '{:.2f}'.format)
 #===================================================================================================================================================================#
 
 ''' USER INPUTS - MUST BE SPECIFIED '''
+# Load your dataset
+dataset = 
 
 # ASSIGN THE TRAINING DATASET TO A VARIABLE
-data = 
+data = dataset[:round(len(dataset)*9/10)]
 
 # SPECIFY THE PREDICTION OR VALIDATION DATA HERE
-actual = 
+actual = dataset[round(len(dataset)*9/10):]
 
 # SPECIFY THE DEPENDENT VARIABLE BY ITS COLUMN NAME
 dependent = ''
 
 # SPECIFY WHETHER YOU WANT TO 'predict' OR 'classify' THE DEPENDENT VARIABLE
-analysis_type = 'classify'.lower()
+analysis_type = 'predict'.lower()
 
 # IF YOU ARE CLASSIFYING, SET resample TO 'yes' IF YOU HAVE SKEWED INPUTS AND WANT TO BALANCE THE TRAINING DATA TO 50/50
 resample = 'yes'.lower()
@@ -86,8 +89,13 @@ def preprocess(data):
             print(i, 'is not valid')
         
     # Subset the data to just the numeric columns
+    for i in list(data):
+        try:
+            data[i] = data[i].astype(float)
+        except:
+            pass
     data = data[list(data.select_dtypes('int').columns) + list(data.select_dtypes('float').columns) + [dependent]]
-    data = data.loc[:,~data.columns.duplicated()]
+    data = data.T.drop_duplicates().T
     return(data)
 
 # Run the preprocessing function over the training data and the actual data that we are predicting
@@ -97,8 +105,11 @@ actual = preprocess(actual)
 # Drop fields from the data where more than 75% of the records in that field are null, as that will adversely affect the model
 data = data.replace([np.inf, -np.inf], np.nan)
 for i in list(data):
-    if sum(data[i].isna())/len(data) > .75:
-        data = data.drop(i, axis = 1)
+    try:
+        if sum(data[i].isna())/len(data) > .75:
+            data = data.drop(i, axis = 1)
+    except:
+        pass
 
 #===================================================================================================================================================================#
 
@@ -115,7 +126,7 @@ for i in list(data):
         
         # Create a subset of a single x & y variable. Remove all infinite/nan values
         model = data[[i, dependent]].replace([np.inf, -np.inf], np.nan).dropna().reset_index(drop = True)
-        model = model.loc[:,~model.columns.duplicated()]
+        model = model.T.drop_duplicates().T
                 
         # Resample the data for binary variables to ensure greater accuracy        
         if analysis_type == 'classify' and resample == 'yes' and model[dependent].nunique() == 2: 
@@ -208,7 +219,7 @@ for i in range(len(regressions)):
         
         # Create a subset of the dataframe with only the relevant variables
         model = data[variables].replace([np.inf, -np.inf], np.nan).dropna().reset_index(drop = True)
-        model = model.loc[:,~model.columns.duplicated()]
+        model = model.T.drop_duplicates().T
         
         if analysis_type == 'classify' and resample == 'yes' and model[dependent].nunique() == 2: 
             try:
@@ -271,7 +282,10 @@ for i in range(len(regressions)):
                 
             else:
                 print('Dropping', regressions['FACTOR'][i], 'from model')
-                variables.remove(regressions['FACTOR'][i])
+                try:
+                    variables.remove(regressions['FACTOR'][i])
+                except:
+                    pass
         
     except:
         pass
@@ -283,7 +297,10 @@ for i in range(len(regressions)):
 
 # Drop the model inputs that are not available in the prediction dataset
 model_inputs = [x for x in model_inputs if x in list(actual)] 
-model_inputs.remove(dependent) 
+try:
+    model_inputs.remove(dependent) 
+except:
+    pass
 
 # Create a prediction dataset 
 prediction = actual[model_inputs]
@@ -295,7 +312,7 @@ prediction.fillna(prediction.mean(), inplace = True)
 prediction = prediction[prediction.columns[0:]].replace([np.inf, -np.inf], np.nan).dropna().reset_index(drop = True).astype(float)
 
 # Drop duplicated columns
-prediction = prediction.loc[:,~prediction.columns.duplicated()]
+prediction = prediction.T.drop_duplicates().T
 
 # Reset the model inputs to ensure that it only consists of available fields in the prediction data
 model_inputs = list(prediction)
@@ -310,7 +327,7 @@ results = actual[model_inputs]
 model_inputs.append(dependent)
 model = data[model_inputs]
 model = model.fillna(model.mean()).reset_index(drop = True).astype(float)
-model = model.loc[:,~model.columns.duplicated()]
+model = model.T.drop_duplicates().T
 model = model.dropna().reset_index(drop = True)
 
 if analysis_type == 'classify' and resample == 'yes' and model[dependent].nunique() == 2:  
@@ -693,8 +710,9 @@ results['Neural_Net_Prediction'] = net.predict(prediction_scaled)
 
 #===================================================================================================================================================================#
 
-# Sort the model based on the analysis type, and select the best performing model
+#===================================================================================================================================================================#
 
+# Generate the modeling report
 print('--------------------------------------------------------------------------------------------------------------------------------------------------------------')
 print('--------------------------------------------------------------------------------------------------------------------------------------------------------------')
 
@@ -747,29 +765,131 @@ try:
 except:
     pass
 
-# Set visualization parameters based on the analysis type
-if analysis_type == 'classify':
-    value = True
-    value_2 = False
-else: 
-    value = False
-    value_2 = True
-  
-# Plot the histogram
 try:
+    # Plot the distribution of predictions
     sns.set(rc = {'figure.figsize' : (15,6)})
-    ax = sns.distplot(review[column], hist = value, label = column, kde = value_2)
+    ax = sns.kdeplot(review[column], label = column)
     try:
-        ax = sns.distplot(review['Actual'], hist = value, label = 'Validation Data Actual', kde = value_2)
+        ax = sns.kdeplot(review['Actual'], label = 'Validation Data Actual')
     except:
         pass
-    ax = sns.distplot(data[dependent], hist = value, label = 'Training Data Actual', kde = value_2)
+    ax = sns.kdeplot(data[dependent],  label = 'Training Data Actual')
     ax.legend(bbox_to_anchor = (1, 1), loc = 2)
     ax.set(xlabel = dependent)
     ax.set(yscale="symlog")
+    plt.show()
+except: 
+    pass
+
+# Try printing the confusion matrix and classification report, if the model is a classification model
+if analysis_type == 'classify':
+    
+    # Create a model variable using the training dataset to train the predictive models and replace the null values
+    model_inputs.append(dependent)
+    model = data[model_inputs]
+    model = model.fillna(model.mean()).reset_index(drop = True).astype(float)
+    model = model.T.drop_duplicates().T
+    model = model.dropna().reset_index(drop = True)
+    
+    # Resample if necessary
+    if resample == 'yes' and model[dependent].nunique() == 2:  
+        try:
+            
+            # Split the binary data into separate groups
+            group_zero = shuffle(model[model[dependent]== 0])
+            group_one = shuffle(model[model[dependent] == 1])
+            
+            # Reduce the larger of the two groups to the same number of rows as the smaller one
+            if len(group_zero) > len(group_one):
+                group_zero = group_zero[:len(group_one)]
+            else:
+                group_one = group_one[:len(group_zero)]
+            
+            # Recombine the groups into the model dataframe
+            model = pd.concat([group_zero, group_one]).reset_index(drop = True)
+            
+        except:
+            pass    
+         
+    # Scale the inputs if it is a KNN or Neural Network model
+    if model_results.loc[0,'Model'] == 'KNN' or model_results.loc[0,'Model'] == 'Neural Network':
+        
+        # Convert the independent/dependent variables to separate, scaled arrays
+        x = scaler.fit_transform(model.drop(dependent, axis = 1).values)
+        y = model[dependent].values
+    
+    else:
+        
+        # Convert the training variables to arrays
+        x = model.drop(dependent, axis = 1).values
+        y = model[dependent].values
+    
+    # Split the new dataset into training and test sets
+    x_train, x_test, y_train, y_test = train_test_split(x, y, train_size = .8)
+        
+    # # Format the model inputs as numpy arrays
+    x_train = x_train
+    y_train = y_train.reshape(-1,1)
+    
+    # Determine which model was used, then create a variable for that model that can be trained on a subset of the input data
+    if model_results.loc[0,'Model'] == 'Logistic Regression':
+        selected_model = LogisticRegression(max_iter = 1000)
+    elif model_results.loc[0,'Model'] == 'Support Vector Machine':
+        selected_model = SVC()
+    elif model_results.loc[0,'Model'] == 'Decision Tree':
+        selected_model = DecisionTreeClassifier()
+    elif model_results.loc[0,'Model'] == 'Random Forest':
+        selected_model = RandomForestClassifier(n_estimators = 100)
+    elif model_results.loc[0,'Model'] == 'KNN':
+        selected_model = KNeighborsClassifier(n_neighbors = 3)
+    elif model_results.loc[0,'Model'] == 'Neural Network':
+        selected_model = MLPClassifier(hidden_layer_sizes = (1000, 100, 100, 100, 100), max_iter = 100000)
+    
+    # Fit the model on the training data
+    selected_model.fit(x_train,y_train)
+    y_pred = selected_model.predict(x_test)
+    
+    # Check the results
+    print('\n Your confusion matrix and classification reports are as follows: \n')
+    print(confusion_matrix(y_test, y_pred))
+    print(classification_report(y_test, y_pred))
+
+    
+try:
+    # Plot features by importance for random forest
+    if model_results.loc[0,'Model'] == 'Random Forest':
+        print('\n\n The relative importance of your model inputs are as follows: \n')
+        feat_importances = pd.Series(forest.feature_importances_, index=model.drop(dependent, axis = 1).columns)
+        feat_importances.nlargest(20).plot(kind='barh')
+        
+    # Plot features by importance for the decision tree
+    elif model_results.loc[0,'Model'] == 'Decision Tree':
+        print('\n\n The relative importance of your model inputs are as follows: \n')
+        feat_importances = pd.Series(tree.feature_importances_, index=model.drop(dependent, axis = 1).columns)
+        feat_importances.nlargest(20).plot(kind='barh')
+        
+        # Start a new plot and plot the tree
+        print('\n Your decision tree: \n')
+        plt.clf()
+        plot_tree(tree, max_depth = 2, feature_names = model.drop(dependent, axis = 1).columns, filled = True)
+        
+    # Plot the coefficients for the regression models
+    elif model_results.loc[0,'Model'] == 'Linear Regression' or model_results.loc[0,'Model'] == 'Logistic Regression':
+        print('\n\n Your regression coefficients are as follows: \n')
+        variables = pd.DataFrame(model.drop(dependent, axis = 1).columns)
+        coefficients = pd.DataFrame(np.transpose(reg.coef_)).set_index(variables[0])
+        coefficients.plot(kind = 'barh')
+        
+    # Plot the coefficients for the SVM models
+    elif model_results.loc[0,'Model'] == 'Support Vector Machine':
+        print('\n\n Your support vector coefficients are as follows: \n')
+        variables = pd.DataFrame(model.drop(dependent, axis = 1).columns)
+        coefficients = pd.DataFrame(np.transpose(svm.coef_)).set_index(variables[0])
+        coefficients.plot(kind = 'barh')
+        
 except:
     pass
 
+
 print('\n--------------------------------------------------------------------------------------------------------------------------------------------------------------')
 print('--------------------------------------------------------------------------------------------------------------------------------------------------------------')
-
