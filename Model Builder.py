@@ -8,6 +8,8 @@ from sklearn.neural_network import MLPClassifier, MLPRegressor
 from sklearn.svm import SVR, SVC
 from sklearn.metrics import r2_score, mean_squared_error, confusion_matrix, classification_report
 from sklearn import preprocessing
+from sklearn.preprocessing import scale
+from sklearn.decomposition import PCA
 from sklearn.utils import shuffle
 import numpy as np
 from math import sqrt
@@ -20,8 +22,7 @@ pd.set_option('display.float_format', '{:.2f}'.format)
 #===================================================================================================================================================================#
 
 ''' USER INPUTS - MUST BE SPECIFIED '''
-# Load your dataset
-dataset = 
+
 
 # ASSIGN THE TRAINING DATASET TO A VARIABLE
 data = dataset[:round(len(dataset)*9/10)]
@@ -30,13 +31,16 @@ data = dataset[:round(len(dataset)*9/10)]
 actual = dataset[round(len(dataset)*9/10):]
 
 # SPECIFY THE DEPENDENT VARIABLE BY ITS COLUMN NAME
-dependent = ''
+dependent = 'outcome_type'
 
 # SPECIFY WHETHER YOU WANT TO 'predict' OR 'classify' THE DEPENDENT VARIABLE
-analysis_type = 'predict'.lower()
+analysis_type = 'classify'.lower()
 
 # IF YOU ARE CLASSIFYING, SET resample TO 'yes' IF YOU HAVE SKEWED INPUTS AND WANT TO BALANCE THE TRAINING DATA TO 50/50
 resample = 'yes'.lower()
+
+# SPECIFY IF YOU WANT TO RUN PCA 'yes' OR KEEP YOUR INPUT VALUES INTACT FOR INTERPRETABILITY 'no'
+run_pca = 'yes'
 
 #===================================================================================================================================================================#
 
@@ -209,86 +213,90 @@ print(regressions)
 # Create a list variable for the model inputs
 model_inputs = [dependent]
 
-# Loop through each variable in the regressions, starting with the most highly correlated
-for i in range(len(regressions)):
-    
-    try:
-        # For each iteration, add another variable to the model
-        variables = model_inputs
-        variables.append(regressions['FACTOR'][i])
+if run_pca != 'yes':
+    # Loop through each variable in the regressions, starting with the most highly correlated
+    for i in range(len(regressions)):
         
-        # Create a subset of the dataframe with only the relevant variables
-        model = data[variables].replace([np.inf, -np.inf], np.nan).dropna().reset_index(drop = True)
-        model = model.T.drop_duplicates().T
-        
-        if analysis_type == 'classify' and resample == 'yes' and model[dependent].nunique() == 2: 
-            try:
-                
-                # Split the binary data into separate groups
-                group_zero = shuffle(model[model[dependent]== 0])
-                group_one = shuffle(model[model[dependent] == 1])
-                
-                # Reduce the larger of the two groups to the same number of rows as the smaller one
-                if len(group_zero) > len(group_one):
-                    group_zero = group_zero[:len(group_one)]
-                else:
-                    group_one = group_one[:len(group_zero)]
-                
-                # Recombine the groups into the model dataframe
-                model = pd.concat([group_zero, group_one]).reset_index(drop = True)
-                    
-            except:
-                pass        
-        
-        # Convert the variables to arrays
-        x = model.drop(dependent, axis = 1).values
-        y = model[dependent].values
-        
-        # Run the cross validations
-        scores = cross_val_score(LinearRegression(), x, y, cv = 10, n_jobs = 1, scoring = 'neg_mean_squared_error')
-        r2_scores = cross_val_score(LinearRegression(), x, y, cv = 10, n_jobs = 1, scoring = 'r2')
-        if analysis_type == 'classify':
-            try:
-                accuracy_scores = cross_val_score(LogisticRegression(max_iter = 1000), x, y, cv = 10, n_jobs = 1, scoring = 'accuracy')
-                accuracy = accuracy_scores.mean()
-            except:
-                accuracy = 0
-                pass
-        
-        # Calculate overall cross validation results
-        rmse = sqrt(abs(scores.mean()))
-        r2 = r2_scores.mean()
-        
-        # Check to see if this is the first run through
-        if i == 0:
-            # calculate the mean r2 and root mean squared error for the model with the given variables
-            mean_r2 = r2
-            mean_rmse = rmse
-            mean_accuracy = accuracy
-            print('\n', 'R2:', mean_r2, '\n', 'RMSE:', mean_rmse, '\n', 'Accuracy:', mean_accuracy, '\n', 'Dependend Variables:', variables[:-1], '\n')
-    
-        # If it is not the first run, see if the new RMSE is less than the current one    
-        else:
-            # If the rmse improves by at least 1% between runs, print the output and update the list of dependent variables to use
-            if (accuracy > mean_accuracy) and analysis_type == 'classify' and accuracy > 0:
-                mean_r2 = r2
-                mean_accuracy = accuracy
-                print('\n', 'R2:', mean_r2, '\n', 'Accuracy:', mean_accuracy, '\n', 'Independend Variables:', model_inputs, '\n')
+        try:
+            # For each iteration, add another variable to the model
+            variables = model_inputs
+            variables.append(regressions['FACTOR'][i])
             
-            elif rmse < (mean_rmse)*.99 and analysis_type == 'predict':
-                mean_r2 = r2
-                mean_rmse = rmse    
-                print('\n', 'R2:', mean_r2, '\n', 'RMSE:', mean_rmse, '\n', 'Independend Variables:', model_inputs, '\n')
-                
-            else:
-                print('Dropping', regressions['FACTOR'][i], 'from model')
+            # Create a subset of the dataframe with only the relevant variables
+            model = data[variables].replace([np.inf, -np.inf], np.nan).dropna().reset_index(drop = True)
+            model = model.T.drop_duplicates().T
+            
+            if analysis_type == 'classify' and resample == 'yes' and model[dependent].nunique() == 2: 
                 try:
-                    variables.remove(regressions['FACTOR'][i])
+                    
+                    # Split the binary data into separate groups
+                    group_zero = shuffle(model[model[dependent]== 0])
+                    group_one = shuffle(model[model[dependent] == 1])
+                    
+                    # Reduce the larger of the two groups to the same number of rows as the smaller one
+                    if len(group_zero) > len(group_one):
+                        group_zero = group_zero[:len(group_one)]
+                    else:
+                        group_one = group_one[:len(group_zero)]
+                    
+                    # Recombine the groups into the model dataframe
+                    model = pd.concat([group_zero, group_one]).reset_index(drop = True)
+                        
                 except:
+                    pass        
+            
+            # Convert the variables to arrays
+            x = model.drop(dependent, axis = 1).values
+            y = model[dependent].values
+            
+            # Run the cross validations
+            scores = cross_val_score(LinearRegression(), x, y, cv = 10, n_jobs = 1, scoring = 'neg_mean_squared_error')
+            r2_scores = cross_val_score(LinearRegression(), x, y, cv = 10, n_jobs = 1, scoring = 'r2')
+            if analysis_type == 'classify':
+                try:
+                    accuracy_scores = cross_val_score(LogisticRegression(max_iter = 1000), x, y, cv = 10, n_jobs = 1, scoring = 'accuracy')
+                    accuracy = accuracy_scores.mean()
+                except:
+                    accuracy = 0
                     pass
+            
+            # Calculate overall cross validation results
+            rmse = sqrt(abs(scores.mean()))
+            r2 = r2_scores.mean()
+            
+            # Check to see if this is the first run through
+            if i == 0:
+                # calculate the mean r2 and root mean squared error for the model with the given variables
+                mean_r2 = r2
+                mean_rmse = rmse
+                mean_accuracy = accuracy
+                print('\n', 'R2:', mean_r2, '\n', 'RMSE:', mean_rmse, '\n', 'Accuracy:', mean_accuracy, '\n', 'Dependend Variables:', variables[:-1], '\n')
         
-    except:
-        pass
+            # If it is not the first run, see if the new RMSE is less than the current one    
+            else:
+                # If the rmse improves by at least 1% between runs, print the output and update the list of dependent variables to use
+                if (accuracy > mean_accuracy) and analysis_type == 'classify' and accuracy > 0:
+                    mean_r2 = r2
+                    mean_accuracy = accuracy
+                    print('\n', 'R2:', mean_r2, '\n', 'Accuracy:', mean_accuracy, '\n', 'Independend Variables:', model_inputs, '\n')
+                
+                elif rmse < (mean_rmse)*.99 and analysis_type == 'predict':
+                    mean_r2 = r2
+                    mean_rmse = rmse    
+                    print('\n', 'R2:', mean_r2, '\n', 'RMSE:', mean_rmse, '\n', 'Independend Variables:', model_inputs, '\n')
+                    
+                else:
+                    print('Dropping', regressions['FACTOR'][i], 'from model')
+                    try:
+                        variables.remove(regressions['FACTOR'][i])
+                    except:
+                        pass
+            
+        except:
+            pass
+
+else:
+    model_inputs = list(regressions['FACTOR']) + [dependent]
 
 #===================================================================================================================================================================#
 
@@ -355,6 +363,20 @@ y = model[dependent].values
 
 # Create a dataframe to populate model scores into
 model_results = pd.DataFrame()
+
+# If run_pca was set to yes, then create a new X using PCA
+if run_pca == 'yes':
+    
+    # Create a list of factors in the regression results (since this will contain all valid factors)
+    factors = list(regressions['FACTOR'])
+    
+    # Remove anything that is not in the model dataset
+    factors = [x for x in factors if x in list(model)]
+    
+    # Create and fit the PCA model to the training, testing, and prediction data
+    pca = PCA(n_components = 10)
+    x = pca.fit_transform(model[factors].fillna(model.mean()).values)
+    prediction = pca.fit_transform(prediction[factors].dropna())
 
 #===================================================================================================================================================================#
 
@@ -586,18 +608,23 @@ results['Forest_Prediction'] = forest.predict(prediction)
 
 ''' Prep the data for predictive models THAT REQUIRE DATA NORMALIZATION'''
 
-# Assign a scaler variable
-scaler = preprocessing.MinMaxScaler()
-
-# Convert the independent/dependent variables to separate arrays
-x = scaler.fit_transform(model.drop(dependent, axis = 1).values)
-y = model[dependent].values
-
-# Split the data into train and test data
-x_train, x_test, y_train, y_test = train_test_split(x, y, train_size = .8)
-
-# Scale the prediction dataset
-prediction_scaled = scaler.fit_transform(prediction)
+if run_pca != 'yes':
+    
+    # Assign a scaler variable
+    scaler = preprocessing.MinMaxScaler()
+    
+    # Convert the independent/dependent variables to separate arrays
+    x = scaler.fit_transform(model.drop(dependent, axis = 1).values)
+    y = model[dependent].values
+       
+    # Split the data into train and test data
+    x_train, x_test, y_train, y_test = train_test_split(x, y, train_size = .8)
+    
+    # Scale the prediction dataset
+    prediction_scaled = scaler.fit_transform(prediction)
+    
+else:
+    prediction_scaled = prediction
 
 
 #===================================================================================================================================================================#
@@ -739,7 +766,8 @@ column = model_results.loc[0,'Column']
 model_results.drop('Column', axis = 1)
     
 # Print the independent variables
-print('\n\n The following factors should be included in your model as independent variables: {}'.format(model_inputs))
+if run_pca != 'yes':
+    print('\n\n The following factors should be included in your model as independent variables: {}'.format(model_inputs))
 
 # Check the results
 print('\n\n The results for each model are as follows: \n', model_results)
