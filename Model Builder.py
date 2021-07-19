@@ -303,6 +303,14 @@ else:
 
 ''' Preprocess the prediction data '''
 
+# Drop columns with mostly null values in the actual dataset
+for i in list(actual):
+    try:
+        if sum(actual[i].isna())/len(actual) > .5:
+            actual = actual.drop(i, axis = 1)
+    except:
+        pass
+    
 # Drop the model inputs that are not available in the prediction dataset
 model_inputs = [x for x in model_inputs if x in list(actual)] 
 try:
