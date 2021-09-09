@@ -1,0 +1,47 @@
+import pandas as pd
+import statsmodels.api as sm
+
+# Import your dataset
+df = YOUR_DATASET_HERE
+
+# Specify your dependent variable
+dependent = YOUR_DEPENDENT_VARIABLE
+
+# Create a list of independent variables to loop through - you can also specify your own list
+variables = list(df.drop(dependent, axis = 1))
+
+# Set p equal to 1 initially, then reset it to the highest p-value of each run. End the loop when the highest p-value is below .05
+p=1
+
+# Run a stepwise, throwing out variables without statistical significance in each iteration.
+while p > .05:
+
+    # Create a dataframe to work from
+    df = mldf[variables]
+    df.replace([np.inf, -np.inf], np.nan, inplace=True)
+    df.dropna(inplace = True)
+
+    # Specify variables
+    y = df[dependent]
+    x = df.drop(['date', dependent], axis = 1)
+    cols = x.columns   
+
+    # Return the stats
+    results = sm.OLS(y, x).fit()
+    # print(results.summary())
+
+    # Create a dataframe of results
+    pv = pd.DataFrame(results.pvalues).sort_values(0, ascending = False).reset_index(drop = False).rename(columns = {'index' : 'Variable', 0 : 'p'})
+
+    # Set p equal to the highest p-value
+    p = pv.loc[0,'p']
+
+    # If the highest p-value exceeds .05, remove it from the model
+    if p > .05:
+        variables.remove(pv.loc[0, 'Variable'])
+    else:
+        print(results.summary())
+        
+# Subset your dataframe down to the relevant columns
+variables.append(dependant)
+df = df[variables]
