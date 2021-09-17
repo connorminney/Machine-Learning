@@ -1,0 +1,190 @@
+factors = list(correlations.index[1:])
+
+# Create a variables field
+variables = factors + [dependent]
+
+# Set p equal to 1 initially, then reset it to the highest p-value of each run. End the loop when the highest p-value is below .05
+p=1
+
+# Run a stepwise, throwing out variables without statistical significance
+while p > .001: 
+    
+    # Create a dataframe to work from
+    df = mldf[variables]
+    df = df.loc[:,~df.columns.duplicated()]
+    df.replace([np.inf, -np.inf], np.nan, inplace=True)
+    df.dropna(inplace = True)
+    
+    # Specify variables
+    y = df[dependent]
+    x = df.drop([dependent], axis = 1)
+    cols = x.columns   
+    
+    # Return the stats
+    results = sm.OLS(y, x).fit()
+    print(results.summary())
+          
+    # Create a dataframe of results
+    pv = pd.DataFrame(results.pvalues).sort_values(0, ascending = False).reset_index(drop = False).rename(columns = {'index' : 'Variable', 0 : 'p'})
+    
+    # Set p equal to the highest p-value
+    p = pv.loc[0,'p']
+    
+    # If the highest p-value exceeds .05, remove it from the model
+    if p > .001:
+        variables.remove(pv.loc[0, 'Variable'])
+    else:
+        print(results.summary())
+        print('')
+ 
+f1 = 0
+def Evaluate():
+    
+    # Subset the main dataset to the remaining variables
+    df = mldf[variables]
+    df = df.loc[:,~df.columns.duplicated()]
+    
+    # Specify factors
+    y = df[dependent]
+    x = df[variables].drop([dependent], axis = 1)
+    cols = x.columns
+    
+    # Create a scaler variable and scale the independent variables
+    scaler = StandardScaler()
+    scaler.fit(x)
+    x = scaler.transform(x)
+    
+    # Cross validate the model
+    scores = cross_val_score(AdaBoostClassifier(n_estimators = 1000), x, y, cv = 10, n_jobs = 3, scoring = 'accuracy')
+    global f1
+    f1 = cross_val_score(AdaBoostClassifier(n_estimators = 1000), x, y, cv = 10, n_jobs = 3, scoring = 'f1')
+    
+    # Evaluate the model
+    accuracy = round(scores.mean(),5)
+    f1 = round(f1.mean(),5)
+    print('Updated accuracy: {}\nUpdated f1: {}'.format(accuracy, f1))
+
+Evaluate()
+print('F1 IS {}'.format(str(f1)))
+
+######################################################################################################################################################################
+''' LOOP THROUGH EACH REMAINING FACTOR AND DROP THE ONES THAT DO NOT REDUCE THE ERROR '''
+
+# Create a dataframe of just the remaining factors
+df = mldf[variables]
+
+# Calculate the correlations for each variable - we are doing this so that we can work our way down from most to least correlated
+correlations = df.corr()[dependent]
+correlations = pd.DataFrame(abs(correlations)).sort_values(dependent, ascending = True)
+correlations = correlations[correlations[dependent] != 1]
+
+# Drop the 'advance' booking amounts that are more than +/- two weeks from the depart date
+variables = list(correlations.index)
+variables.append(dependent)
+
+# Reset the factors to a list containing just the dependent variable, then loop through the variables from the stepwise and only keep ones that reduce RMSE
+factors = variables
+
+for i in variables:
+    
+    # try:
+        # Add the next independent variable to the list
+        factors.remove(i)
+        
+        # Create a dataframe variable to work with
+        df = mldf[factors + [dependent]]
+        df = df.dropna()
+        df = df.loc[:,~df.columns.duplicated()]
+        
+        # Specify factors
+        y = df[dependent]
+        x = df[factors].drop([dependent], axis = 1)
+        cols = x.columns
+
+        # Create a scaler variable and scale the independent variables
+        scaler = StandardScaler()
+        scaler.fit(x)
+        x = scaler.transform(x)
+
+        # Cross validate the model
+        scores = cross_val_score(AdaBoostClassifier(n_estimators = 1000), x, y, cv = 10, n_jobs = 3, scoring = 'f1')
+    
+        # Evaluate the model
+        acc = round(scores.mean(),5)
+        
+        if acc >= f1:
+            print('Dropped {}. F1 is now {} with {} factors'.format(str(i), str(acc), str(len(factors))))
+            f1 = acc
+        else:
+            factors.append(i)
+            print('Kept ' + str(i))
+    # except:
+    #     pass
+        
+Evaluate()
+backup = factors
+
+######################################################################################################################################################################
+''' LOOP THROUGH EACH REMAINING FACTOR, STARTING WITH NOTHING, AND ONLY ADD BACK THE ONES THAT INCREASE THE F1 '''
+
+# Create a dataframe of just the remaining factors
+df = mldf[factors]
+
+# Calculate the correlations for each variable - we are doing this so that we can work our way down from most to least correlated
+correlations = df.corr()[dependent]
+correlations = pd.DataFrame(abs(correlations)).sort_values(dependent, ascending = False)
+    
+# Drop the 'advance' booking amounts that are more than +/- two weeks from the depart date
+factors = list(correlations.index[1:])
+
+# Create a variables field
+variables = factors + [dependent]
+
+factors = [dependent]
+accuracy = 0
+
+for i in variables:
+    
+    try:
+        # Add the next independent variable to the list
+        factors.append(i)
+        
+        # Create a dataframe variable to work with
+        df = mldf[factors]
+        df.replace([np.inf, -np.inf], np.nan, inplace=True)
+        df = df.loc[:,~df.columns.duplicated()]
+        df = df.dropna()
+        
+        # Specify factors
+        y = df[dependent]
+        x = df[factors].drop([dependent], axis = 1)
+        cols = x.columns
+
+        # Create a scaler variable and scale the independent variables
+        scaler = StandardScaler()
+        scaler.fit(x)
+        x = scaler.transform(x)
+        
+        # Cross validate the model
+        scores = cross_val_score(AdaBoostClassifier(n_estimators = 1000), x, y, cv = 10, n_jobs = 3, scoring = 'f1')
+    
+        # Evaluate the model
+        acc = round(scores.mean(),5)
+        
+        if acc <= accuracy:
+            factors.remove(i)
+            print('Dropped ' + str(i))
+        else:
+            accuracy = acc
+            print('F1 for {}: {} \n'.format(i,acc))
+    except:
+        pass
+
+variables = factors    
+Evaluate()
+
+''' Updated accuracy: 0.97271
+    Updated f1: 0.95394
+   ['southwest', 'HIGH_FRAUD_ZIP', 'OVERDRAW', 'TRAN_AMT', 'MOBILE', 'PHONE_TRAN_DIFF', 'WF_dvc_age', 'pacific northwest', 
+    'texas', 'Apr', 'AFA_BM', 'OPEN_ACCT_CT', 'mid atlantic', 'CUST_AGE', 'southeast', 'west bengal', 'northeast',
+    'mississippi', 'CHALLENGE_ISSUED', 'ACCT_PRE_TRAN_AVAIL_BAL', 'PHONE', 'FRAUD_NONFRAUD'] '''
