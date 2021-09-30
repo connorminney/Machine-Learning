@@ -1,3 +1,99 @@
+# https://www.mindsumo.com/contests/campus-analytics-challenge-2021
+
+# Import libraries
+import pandas as pd
+import seaborn as sns
+import numpy as np
+import datetime
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
+from sklearn.ensemble import AdaBoostClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import train_test_split, cross_val_score
+import holidays
+import statsmodels.api as sm
+from sklearn.metrics import classification_report
+
+# Create the training datasets
+mldf = pd.read_excel('https://d18qs7yq39787j.cloudfront.net/uploads/contestfile/479/b765dc3d8076-trainset+%281%29.xlsx', parse_dates = ['PWD_UPDT_TS', 'PH_NUM_UPDT_TS', 'CUST_SINCE_DT', 'TRAN_TS', 'TRAN_DT', 'ACTVY_DT'])
+
+# Convert the dependent variable to a binary value
+mldf.FRAUD_NONFRAUD = np.where(mldf.FRAUD_NONFRAUD == 'Fraud', 1, 0)
+
+# Create a value for the dependent variable so that it is easier to identify
+dependent = 'FRAUD_NONFRAUD'
+
+# Add a weekday field
+mldf['Weekday'] = pd.DatetimeIndex(mldf.TRAN_TS).weekday
+mldf['Weekday'] = mldf.Weekday.replace({0 : 'Monday', 1 : 'Tuesday', 2 : 'Wednesday', 3 : 'Thursday', 4 : 'Friday', 5 : 'Saturday', 6 : 'Sunday'})
+mldf['Month'] = pd.DatetimeIndex(mldf.TRAN_TS).month
+mldf['Month'] = mldf['Month'].replace({1 : 'Jan', 2 : 'Feb', 3 : 'Mar', 4 : 'Apr', 5 : 'May', 6 : 'Jun', 7 : 'Jul', 8 : 'Aug', 9 : 'Sep', 10 : 'Oct', 11  : 'Nov', 12 : 'Dec'})
+mldf['Year'] = pd.DatetimeIndex(mldf.TRAN_TS).year
+
+# Add a holiday field
+for i in range(len(mldf)):
+    mldf.loc[i, 'Holiday'] = np.where(mldf.loc[i, 'TRAN_TS'] in holidays.UnitedStates(), 1, 0)
+
+# Create a field showing when the transaction exceeded the account balance
+mldf['OVERDRAW'] = np.where(mldf.TRAN_AMT > mldf.ACCT_PRE_TRAN_AVAIL_BAL, 1, 0)
+
+# Create a field denoting what percent of the total balance was transacted - .01 is added to allow this to work with accounts that have a zero balance
+mldf['PERCENT_BAL'] = mldf.TRAN_AMT/(mldf.ACCT_PRE_TRAN_AVAIL_BAL + .01)
+
+# Create a zero balance flag
+mldf['ZERO_BAL'] = np.where(mldf.ACCT_PRE_TRAN_AVAIL_BAL == 0, 1, 0)
+
+# Fill password and phone update fields with the CUST_SINCE_DT value
+for i in ['PWD_UPDT_TS', 'PH_NUM_UPDT_TS']:
+    mldf[i] = mldf[i].str.split(' ').str[0]
+    
+# Create a field denoting false dates
+mldf['FALSE_DATE'] = np.where((mldf['PWD_UPDT_TS'] == '6/31/2020') | (mldf['PWD_UPDT_TS'] == '6/31/2018') | (mldf['PH_NUM_UPDT_TS'] == '3/0/2019'), 1, 0)
+
+# Fill the false date with a null value since pandas cannot handle it
+mldf['PWD_UPDT_TS'] = np.where((mldf['PWD_UPDT_TS'] == '6/31/2020') | (mldf['PWD_UPDT_TS'] == '6/31/2018') | (mldf['PWD_UPDT_TS'] == '3/0/2019'), np.nan, mldf['PWD_UPDT_TS'])
+mldf['PH_NUM_UPDT_TS'] = np.where((mldf['PH_NUM_UPDT_TS'] == '6/31/2020') | (mldf['PH_NUM_UPDT_TS'] == '6/31/2018') | (mldf['PH_NUM_UPDT_TS'] == '3/0/2019'), np.nan, mldf['PWD_UPDT_TS'])
+    
+# Calculate time differences between password/phone updates, onboarding dates, and transaction dates
+mldf['ONBOARD_TO_TRAN'] = (pd.to_datetime(mldf.CUST_SINCE_DT) - pd.to_datetime(mldf.TRAN_DT)).dt.days
+mldf['PWD_PHONE_DIFF'] = (pd.to_datetime(mldf.PWD_UPDT_TS) - pd.to_datetime(mldf.PH_NUM_UPDT_TS)).dt.days
+mldf['PWD_TRAN_DIFF'] = (pd.to_datetime(mldf.PWD_UPDT_TS) - pd.to_datetime(mldf.TRAN_DT)).dt.days
+mldf['PHONE_TRAN_DIFF'] = (pd.to_datetime(mldf.PH_NUM_UPDT_TS) - pd.to_datetime(mldf.TRAN_DT)).dt.days
+
+# Fill the null values from the calculations above with the mean of those columns
+for i in ['PWD_PHONE_DIFF', 'PWD_TRAN_DIFF', 'PHONE_TRAN_DIFF']:
+    mldf[i] = mldf[i].fillna(mldf[i].mean())
+    
+# Calculate how long the have been a customer for
+mldf['CUST_YEARS'] = datetime.date.today()
+mldf['CUST_YEARS'] = round((pd.to_datetime(mldf.CUST_YEARS) - pd.to_datetime(mldf.CUST_SINCE_DT))/datetime.timedelta(days = 365))
+
+# Identify zip codes with high instances of fraud 
+zips = pd.pivot_table(mldf, index = 'CUST_ZIP', values = ['FRAUD_NONFRAUD'], aggfunc = 'mean').rename(columns = {'FRAUD_NONFRAUD' : 'FRAUD_RATE'})
+zips2 = pd.pivot_table(mldf, index = 'CUST_ZIP', values = ['FRAUD_NONFRAUD'], aggfunc = 'count').rename(columns = {'FRAUD_NONFRAUD' : 'TOTAL_OBS'})
+zips = zips.merge(zips2, left_index = True, right_index = True)
+# If the fraud rate in a particular zip code is higher than the average, assign a value of 1, else 0
+# zips['HIGH_FRAUD_ZIP'] = np.where((zips.FRAUD_RATE > mldf.FRAUD_NONFRAUD.mean()), 1, 0)
+# For the high fraud areas, convert the value assigned above back to the total instances of fraud observed, that way zips with more observations receive greater weighting
+# zips['HIGH_FRAUD_ZIP'] = np.where((zips.FRAUD_RATE > mldf.FRAUD_NONFRAUD.mean()), zips.HIGH_FRAUD_ZIP * zips.TOTAL_OBS * zips.FRAUD_RATE, zips.HIGH_FRAUD_ZIP)
+
+mldf = mldf.merge(zips, left_on = 'CUST_ZIP', right_index = True, how = 'left')
+
+# Convert categorical date values to dummy columns
+for i in ['Year', 'Month', 'Weekday', 'RGN_NAME', 'STATE_PRVNC_TXT', 'ALERT_TRGR_CD', 'DVC_TYPE_TXT', 'AUTHC_PRIM_TYPE_CD', 'AUTHC_SCNDRY_STAT_TXT', 'TRAN_TYPE_CD']:
+    try:
+        dummies = pd.get_dummies(mldf[i])
+        mldf = mldf.merge(dummies, left_index = True, right_index = True)
+        mldf.drop(i, inplace = True, axis = 1)
+    except: pass
+
+######################################################################################################################################################################
+''' LOOP THROUGH THE REMAINING FACTORS AND DROP THE ONES WITH P VALUES < .05 (this is a stepwise regression) '''    
+
+# Calculate the correlations for each variable
+correlations = mldf.corr()[dependent]
+correlations = pd.DataFrame(abs(correlations)).sort_values(dependent, ascending = False)
+    
+# Drop the 'advance' booking amounts that are more than +/- two weeks from the depart date
 factors = list(correlations.index[1:])
 
 # Create a variables field
@@ -120,12 +216,14 @@ for i in variables:
             print('Kept ' + str(i))
     # except:
     #     pass
-        
+  
+factors.append(dependent)
+variables = factors   
 Evaluate()
 backup = factors
 
 ######################################################################################################################################################################
-''' LOOP THROUGH EACH REMAINING FACTOR, STARTING WITH NOTHING, AND ONLY ADD BACK THE ONES THAT INCREASE THE F1 '''
+''' LOOP THROUGH EACH REMAINING FACTOR, STARTING WITH NOTHING, AND ONLY ADD THE ONES THAT INCREASE THE F1 '''
 
 # Create a dataframe of just the remaining factors
 df = mldf[factors]
@@ -138,7 +236,7 @@ correlations = pd.DataFrame(abs(correlations)).sort_values(dependent, ascending 
 factors = list(correlations.index[1:])
 
 # Create a variables field
-variables = factors + [dependent]
+variables = factors #+ [dependent]
 
 factors = [dependent]
 accuracy = 0
@@ -184,7 +282,97 @@ variables = factors
 Evaluate()
 
 ''' Updated accuracy: 0.97271
-    Updated f1: 0.95394
-   ['southwest', 'HIGH_FRAUD_ZIP', 'OVERDRAW', 'TRAN_AMT', 'MOBILE', 'PHONE_TRAN_DIFF', 'WF_dvc_age', 'pacific northwest', 
-    'texas', 'Apr', 'AFA_BM', 'OPEN_ACCT_CT', 'mid atlantic', 'CUST_AGE', 'southeast', 'west bengal', 'northeast',
-    'mississippi', 'CHALLENGE_ISSUED', 'ACCT_PRE_TRAN_AVAIL_BAL', 'PHONE', 'FRAUD_NONFRAUD'] '''
+    Updated f1: 0.95394 '''
+
+variables = ['FRAUD_NONFRAUD', 'FRAUD_RATE', 'southwest', 'ZERO_BAL', 'TRAN_AMT', 'MOBILE', 'PWD_TRAN_DIFF', 
+             'PERCENT_BAL', 'ONLN',  'WF_dvc_age', 'pacific northwest', 'texas', 'nebraska', 'AFA_BM',
+             'OPEN_ACCT_CT', 'southeast',  'alabama',  'new south wales',  'northeast', 'ACCT_PRE_TRAN_AVAIL_BAL',  'PHONE'] 
+   
+# Create the training data
+x = mldf[variables]
+x.drop(dependent, axis = 1, inplace = True)
+y = mldf[dependent]
+
+# Split the values into training and test
+x_train, x_test, y_train, y_test = train_test_split(x, y, train_size = .7)
+
+# Fit the model to the training data
+model = AdaBoostClassifier(n_estimators = 1000)
+model.fit(x_train,y_train)
+
+pred = model.predict(x_test)
+print(classification_report(y_test, pred))
+
+#================================================================================================================================================#
+''' LOAD IN THE TEST DATA '''
+test = pd.read_excel('https://d18qs7yq39787j.cloudfront.net/uploads/contestfile/479/b765dc3d8076-testset_for_participants.xlsx', parse_dates = ['PWD_UPDT_TS', 'PH_NUM_UPDT_TS', 'CUST_SINCE_DT', 'TRAN_TS', 'TRAN_DT', 'ACTVY_DT'])
+
+# Add a weekday field
+test['Weekday'] = pd.DatetimeIndex(test.TRAN_TS).weekday
+test['Weekday'] = test.Weekday.replace({0 : 'Monday', 1 : 'Tuesday', 2 : 'Wednesday', 3 : 'Thursday', 4 : 'Friday', 5 : 'Saturday', 6 : 'Sunday'})
+test['Month'] = pd.DatetimeIndex(test.TRAN_TS).month
+test['Month'] = test['Month'].replace({1 : 'Jan', 2 : 'Feb', 3 : 'Mar', 4 : 'Apr', 5 : 'May', 6 : 'Jun', 7 : 'Jul', 8 : 'Aug', 9 : 'Sep', 10 : 'Oct', 11  : 'Nov', 12 : 'Dec'})
+test['Year'] = pd.DatetimeIndex(test.TRAN_TS).year
+
+# Add a holiday field
+for i in range(len(test)):
+    test.loc[i, 'Holiday'] = np.where(test.loc[i, 'TRAN_TS'] in holidays.UnitedStates(), 1, 0)
+
+# Create a field showing when the transaction exceeded the account balance
+test['OVERDRAW'] = np.where(test.TRAN_AMT > test.ACCT_PRE_TRAN_AVAIL_BAL, 1, 0)
+
+# Create a field denoting what percent of the total balance was transacted - .01 is added to allow this to work with accounts that have a zero balance
+test['PERCENT_BAL'] = test.TRAN_AMT/(test.ACCT_PRE_TRAN_AVAIL_BAL + .01)
+
+# Create a zero balance flag
+test['ZERO_BAL'] = np.where(test.ACCT_PRE_TRAN_AVAIL_BAL == 0, 1, 0)
+
+# Fill password and phone update fields with the CUST_SINCE_DT value
+for i in ['PWD_UPDT_TS', 'PH_NUM_UPDT_TS']:
+    test[i] = test[i].str.split(' ').str[0]
+    
+# Create a field denoting false dates
+test['FALSE_DATE'] = np.where((test['PWD_UPDT_TS'] == '6/31/2020') | (test['PWD_UPDT_TS'] == '6/31/2018') | (test['PH_NUM_UPDT_TS'] == '3/0/2019') | (test['PWD_UPDT_TS'] == '6/31/2021'), 1, 0)
+
+# Fill the false date with a null value since pandas cannot handle it
+test['PWD_UPDT_TS'] = np.where((test['PWD_UPDT_TS'] == '6/31/2020') | (test['PWD_UPDT_TS'] == '6/31/2018') | (test['PWD_UPDT_TS'] == '3/0/2019') | (test['PWD_UPDT_TS'] == '6/31/2021'), np.nan, test['PWD_UPDT_TS'])
+test['PH_NUM_UPDT_TS'] = np.where((test['PH_NUM_UPDT_TS'] == '6/31/2020') | (test['PH_NUM_UPDT_TS'] == '6/31/2018') | (test['PH_NUM_UPDT_TS'] == '3/0/2019'), np.nan, test['PWD_UPDT_TS'])
+    
+# Calculate time differences between password/phone updates, onboarding dates, and transaction dates
+test['ONBOARD_TO_TRAN'] = (pd.to_datetime(test.CUST_SINCE_DT) - pd.to_datetime(test.TRAN_DT)).dt.days
+test['PWD_PHONE_DIFF'] = (pd.to_datetime(test.PWD_UPDT_TS) - pd.to_datetime(test.PH_NUM_UPDT_TS)).dt.days
+test['PWD_TRAN_DIFF'] = (pd.to_datetime(test.PWD_UPDT_TS) - pd.to_datetime(test.TRAN_DT)).dt.days
+test['PHONE_TRAN_DIFF'] = (pd.to_datetime(test.PH_NUM_UPDT_TS) - pd.to_datetime(test.TRAN_DT)).dt.days
+
+# Fill the null values from the calculations above with the mean of those columns
+for i in ['PWD_PHONE_DIFF', 'PWD_TRAN_DIFF', 'PHONE_TRAN_DIFF']:
+    test[i] = test[i].fillna(test[i].mean())
+    
+# Calculate how long the have been a customer for
+test['CUST_YEARS'] = datetime.date.today()
+test['CUST_YEARS'] = round((pd.to_datetime(test.CUST_YEARS) - pd.to_datetime(test.CUST_SINCE_DT))/datetime.timedelta(days = 365))
+
+# Identify zip codes with high instances of fraud 
+test = test.merge(zips, left_on = 'CUST_ZIP', right_index = True, how = 'left')
+
+# Convert categorical date values to dummy columns
+for i in ['Year', 'Month', 'Weekday', 'RGN_NAME', 'STATE_PRVNC_TXT', 'ALERT_TRGR_CD', 'DVC_TYPE_TXT', 'AUTHC_PRIM_TYPE_CD', 'AUTHC_SCNDRY_STAT_TXT', 'TRAN_TYPE_CD']:
+    try:
+        dummies = pd.get_dummies(test[i])
+        test = test.merge(dummies, left_index = True, right_index = True)
+        test.drop(i, inplace = True, axis = 1)
+    except: pass
+
+# Create the training data
+x = mldf[variables]
+x.drop(dependent, axis = 1, inplace = True)
+y = mldf[dependent]
+
+# Fit the model to the training data
+model = AdaBoostClassifier(n_estimators = 1000)
+model.fit(x,y)
+
+# Predict the values in the test data
+variables.remove(dependent)
+test = test[variables]
+test['FRAUD_NONFRAUD'] = model.predict(test)
