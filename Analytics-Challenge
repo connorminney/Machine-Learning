@@ -65,17 +65,6 @@ for i in ['PWD_PHONE_DIFF', 'PWD_TRAN_DIFF', 'PHONE_TRAN_DIFF']:
 mldf['CUST_YEARS'] = datetime.date.today()
 mldf['CUST_YEARS'] = round((pd.to_datetime(mldf.CUST_YEARS) - pd.to_datetime(mldf.CUST_SINCE_DT))/datetime.timedelta(days = 365))
 
-# Identify zip codes with high instances of fraud 
-zips = pd.pivot_table(mldf, index = 'CUST_ZIP', values = ['FRAUD_NONFRAUD'], aggfunc = 'mean').rename(columns = {'FRAUD_NONFRAUD' : 'FRAUD_RATE'})
-zips2 = pd.pivot_table(mldf, index = 'CUST_ZIP', values = ['FRAUD_NONFRAUD'], aggfunc = 'count').rename(columns = {'FRAUD_NONFRAUD' : 'TOTAL_OBS'})
-zips = zips.merge(zips2, left_index = True, right_index = True)
-# If the fraud rate in a particular zip code is higher than the average and there are at least 4 observations, assign a value of 1, else 0
-zips['HIGH_FRAUD_ZIP'] = np.where((zips.FRAUD_RATE > mldf.FRAUD_NONFRAUD.mean()) & (zips.TOTAL_OBS > 3), 1, 0)
-# For the high fraud areas, convert the value assigned above back to the total instances of fraud observed, that way zips with more observations receive greater weighting
-# zips['HIGH_FRAUD_ZIP'] = np.where((zips.FRAUD_RATE > mldf.FRAUD_NONFRAUD.mean()), zips.HIGH_FRAUD_ZIP * zips.TOTAL_OBS * zips.FRAUD_RATE, zips.HIGH_FRAUD_ZIP)
-
-mldf = mldf.merge(zips, left_on = 'CUST_ZIP', right_index = True, how = 'left')
-
 # Convert categorical date values to dummy columns
 for i in ['Year', 'Month', 'Weekday', 'RGN_NAME', 'STATE_PRVNC_TXT', 'ALERT_TRGR_CD', 'DVC_TYPE_TXT', 'AUTHC_PRIM_TYPE_CD', 'AUTHC_SCNDRY_STAT_TXT', 'TRAN_TYPE_CD']:
     try:
@@ -349,9 +338,6 @@ for i in ['PWD_PHONE_DIFF', 'PWD_TRAN_DIFF', 'PHONE_TRAN_DIFF']:
 # Calculate how long the have been a customer for
 test['CUST_YEARS'] = datetime.date.today()
 test['CUST_YEARS'] = round((pd.to_datetime(test.CUST_YEARS) - pd.to_datetime(test.CUST_SINCE_DT))/datetime.timedelta(days = 365))
-
-# Identify zip codes with high instances of fraud 
-test = test.merge(zips, left_on = 'CUST_ZIP', right_index = True, how = 'left')
 
 # Convert categorical date values to dummy columns
 for i in ['Year', 'Month', 'Weekday', 'RGN_NAME', 'STATE_PRVNC_TXT', 'ALERT_TRGR_CD', 'DVC_TYPE_TXT', 'AUTHC_PRIM_TYPE_CD', 'AUTHC_SCNDRY_STAT_TXT', 'TRAN_TYPE_CD']:
