@@ -170,7 +170,7 @@ factors = variables
 
 for i in variables:
     
-    # try:
+    try:
         # Add the next independent variable to the list
         factors.remove(i)
         
@@ -201,8 +201,8 @@ for i in variables:
         else:
             factors.append(i)
             print('Kept ' + str(i))
-    # except:
-    #     pass
+    except:
+        pass
   
 factors.append(dependent)
 variables = factors   
@@ -268,13 +268,9 @@ for i in variables:
 variables = factors    
 Evaluate()
 
-''' Updated accuracy: 0.97271
-    Updated f1: 0.95394 '''
+''' Updated accuracy: 
+    Updated f1:  '''
 
-variables = ['FRAUD_NONFRAUD', 'FRAUD_RATE', 'southwest', 'ZERO_BAL', 'TRAN_AMT', 'MOBILE', 'PWD_TRAN_DIFF', 
-             'PERCENT_BAL', 'ONLN',  'WF_dvc_age', 'pacific northwest', 'texas', 'nebraska', 'AFA_BM',
-             'OPEN_ACCT_CT', 'southeast',  'alabama',  'new south wales',  'northeast', 'ACCT_PRE_TRAN_AVAIL_BAL',  'PHONE'] 
-   
 # Create the training data
 x = mldf[variables]
 x.drop(dependent, axis = 1, inplace = True)
@@ -291,7 +287,9 @@ pred = model.predict(x_test)
 print(classification_report(y_test, pred))
 
 #================================================================================================================================================#
-''' LOAD IN THE TEST DATA '''
+''' PREDICT VALUES FOR THE TEST DATA '''
+
+# Load the test data
 test = pd.read_excel('https://d18qs7yq39787j.cloudfront.net/uploads/contestfile/479/b765dc3d8076-testset_for_participants.xlsx', parse_dates = ['PWD_UPDT_TS', 'PH_NUM_UPDT_TS', 'CUST_SINCE_DT', 'TRAN_TS', 'TRAN_DT', 'ACTVY_DT'])
 
 # Add a weekday field
@@ -349,7 +347,9 @@ for i in ['Year', 'Month', 'Weekday', 'RGN_NAME', 'STATE_PRVNC_TXT', 'ALERT_TRGR
 
 # Create the training data
 x = mldf[variables]
-x.drop(dependent, axis = 1, inplace = True)
+try:
+    x.drop(dependent, axis = 1, inplace = True)
+except: pass
 y = mldf[dependent]
 
 # Fit the model to the training data
@@ -357,6 +357,16 @@ model = AdaBoostClassifier(n_estimators = 1000)
 model.fit(x,y)
 
 # Predict the values in the test data
-variables.remove(dependent)
-test = test[variables]
+try:
+    variables.remove(dependent)
+except:
+    pass
+test = test[variables + ['dataset_id']].set_index('dataset_id')
 test['FRAUD_NONFRAUD'] = model.predict(test)
+
+# Subset the test dataset to the relevant fields
+test = test[['FRAUD_NONFRAUD']].reset_index(drop = False).rename(columns = {'index' : 'dataset_id'})
+test.FRAUD_NONFRAUD.replace({0 : 'Non-Fraud', 1 : 'Fraud'}, inplace = True)
+
+# Export the results
+test.to_csv('C:\\Users\\conno\\OneDrive\\Desktop\\Challenge\\Connor Minney Test Results.csv', index = False)
