@@ -2,12 +2,10 @@
 
 # Import libraries
 import pandas as pd
-import seaborn as sns
 import numpy as np
 import datetime
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
 from sklearn.ensemble import AdaBoostClassifier
-from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split, cross_val_score
 import holidays
 import statsmodels.api as sm
@@ -71,8 +69,8 @@ mldf['CUST_YEARS'] = round((pd.to_datetime(mldf.CUST_YEARS) - pd.to_datetime(mld
 zips = pd.pivot_table(mldf, index = 'CUST_ZIP', values = ['FRAUD_NONFRAUD'], aggfunc = 'mean').rename(columns = {'FRAUD_NONFRAUD' : 'FRAUD_RATE'})
 zips2 = pd.pivot_table(mldf, index = 'CUST_ZIP', values = ['FRAUD_NONFRAUD'], aggfunc = 'count').rename(columns = {'FRAUD_NONFRAUD' : 'TOTAL_OBS'})
 zips = zips.merge(zips2, left_index = True, right_index = True)
-# If the fraud rate in a particular zip code is higher than the average, assign a value of 1, else 0
-# zips['HIGH_FRAUD_ZIP'] = np.where((zips.FRAUD_RATE > mldf.FRAUD_NONFRAUD.mean()), 1, 0)
+# If the fraud rate in a particular zip code is higher than the average and there are at least 4 observations, assign a value of 1, else 0
+zips['HIGH_FRAUD_ZIP'] = np.where((zips.FRAUD_RATE > mldf.FRAUD_NONFRAUD.mean()) & (zips.TOTAL_OBS > 3), 1, 0)
 # For the high fraud areas, convert the value assigned above back to the total instances of fraud observed, that way zips with more observations receive greater weighting
 # zips['HIGH_FRAUD_ZIP'] = np.where((zips.FRAUD_RATE > mldf.FRAUD_NONFRAUD.mean()), zips.HIGH_FRAUD_ZIP * zips.TOTAL_OBS * zips.FRAUD_RATE, zips.HIGH_FRAUD_ZIP)
 
